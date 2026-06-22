@@ -12,10 +12,12 @@ def v2raytun_deeplink(subscription_url: str) -> str:
 
 
 def happ_deeplink(subscription_url: str) -> str:
-    """Happ Proxy Utility — iOS, Android, Windows, macOS, Linux."""
-    import base64
-    encoded_url = base64.urlsafe_b64encode(subscription_url.encode()).decode().rstrip("=")
-    return f"happ://add/{encoded_url}"
+    """Happ Proxy Utility — канонический формат Remnawave: happ://add/<сырой url>.
+
+    Happ ждёт ссылку подписки без кодирования; base64/percent ломают разбор
+    и дают «неизвестное действие».
+    """
+    return f"happ://add/{subscription_url}"
 
 
 def streisand_deeplink(subscription_url: str) -> str:
