@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Обзор · HamaliVpn Control{% endblock %}
+{% block body %}
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">H</span><span>HamaliVpn <small>Control</small></span></div>
+    <nav>
+      <a class="nav-link active" href="/admin"><span>Обзор</span><kbd>01</kbd></a>
+      <a class="nav-link" href="/admin/users"><span>Пользователи</span><kbd>02</kbd></a>
+      <a class="nav-link" href="/api/docs"><span>API</span><kbd>03</kbd></a>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="system-state"><span class="status-dot"></span><span>Control plane online</span></div>
+      <form method="post" action="/admin/logout">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <button class="button button-ghost" type="submit">Выйти</button>
+      </form>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div><div class="eyebrow">Операционный центр</div><h1>Обзор системы</h1></div>
+      <div class="live-pill"><span class="pulse"></span> Live</div>
+    </header>
+
+    <section class="metric-grid">
+      <article class="metric-card"><span>Пользователи</span><strong>{{ metrics.customers }}</strong><small>в базе HamaliVpn</small></article>
+      <article class="metric-card accent"><span>Активные</span><strong>{{ metrics.active }}</strong><small>действующие подписки</small></article>
+      <article class="metric-card"><span>Все подписки</span><strong>{{ metrics.subscriptions }}</strong><small>за всё время</small></article>
+      <article class="metric-card"><span>Тесты</span><strong>{{ metrics.trials }}</strong><small>выдано автоматически</small></article>
+    </section>
+
+    <section class="content-grid">
+      <article class="panel panel-wide">
+        <div class="panel-head"><div><span class="eyebrow">Последняя активность</span><h2>Подписки</h2></div><a href="/admin/users">Все пользователи</a></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Клиент</th><th>План</th><th>Статус</th><th>До</th><th>Устройства</th><th></th></tr></thead>
+            <tbody>
+            {% for sub in subscriptions %}
+              <tr>
+                <td><div class="identity"><span class="avatar">{{ sub.customer.full_name[:1] or "H" }}</span><div><b>{{ sub.customer.full_name or "Без имени" }}</b><small>@{{ sub.customer.telegram_username or sub.customer.telegram_id }}</small></div></div></td>
+                <td>{{ sub.plan_code }}</td>
+                <td><span class="badge badge-{{ sub.status.value }}">{{ sub.status.value }}</span></td>
+                <td>{{ sub.expires_at.strftime("%d.%m %H:%M") }}</td>
+                <td>{{ sub.device_limit }}</td>
+                <td>
+                  {% if sub.status.value == "active" %}
+                  <form method="post" action="/admin/subscriptions/{{ sub.id }}/disable">
+                    <input type="hidden" name="csrf" value="{{ csrf }}">
+                    <button class="table-action" type="submit">Отключить</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="empty">Подписок пока нет. Первая появится после теста в Telegram-боте.</td></tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head"><div><span class="eyebrow">Безопасность</span><h2>Журнал</h2></div></div>
+        <div class="timeline">
+          {% for event in events %}
+          <div class="timeline-item"><span class="timeline-dot"></span><div><b>{{ event.action }}</b><small>{{ event.actor }} · {{ event.created_at.strftime("%d.%m %H:%M") }}</small></div></div>
+          {% else %}
+          <p class="empty">Событий пока нет.</p>
+          {% endfor %}
+        </div>
+      </article>
+    </section>
+  </main>
+</div>
+{% endblock %}

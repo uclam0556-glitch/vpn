@@ -1,155 +1,150 @@
-# HamaliVpn — деплой бота и автоматизации
+# HamaliVpn — production deployment
 
-Полный путь: панель Remnawave + бот Bedolaga на одном управляющем сервере, оплата Platega + Telegram Stars, выдача подписок с автоподключением. VPN-ноды подключаем позже.
+## Состав
 
-```
-Управляющий VPS
- ├─ Remnawave (панель)         panel.hamalivpn.com
- ├─ Bedolaga (бот + вебадминка) bot.hamalivpn.com  (:8080 за Caddy)
- ├─ PostgreSQL + Redis          (внутренние)
- └─ Caddy (авто-SSL, reverse proxy)
-Лендинг (отдельно)             hamalivpn.com → Cloudflare Pages
-```
+OVH VPS-1:
 
----
+- Remnawave Panel + собственная PostgreSQL/Valkey;
+- HamaliVpn Control API и dashboard;
+- HamaliVpn Telegram Bot;
+- HamaliVpn PostgreSQL;
+- Redis;
+- maintenance worker;
+- Caddy с автоматическим TLS.
 
-## 0. Что нужно подготовить
+VPN-ноды устанавливаются отдельно и подключаются к Remnawave.
 
-| Что | Где взять | Секрет? |
-|---|---|---|
-| Управляющий VPS (2 vCPU / 2–4 ГБ / Ubuntu 22.04+) | любой чистый хостер | — |
-| Домен `hamalivpn.com` + поддомены `panel.`, `bot.` | регистратор | — |
-| `BOT_TOKEN` | @BotFather | **да** |
-| `ADMIN_IDS` (твой Telegram ID) | @userinfobot | нет |
-| `@username` бота | @BotFather | нет |
-| Platega `MERCHANT_ID` + `SECRET` | кабинет Platega | **да** |
+## Временные адреса без покупки домена
 
-DNS A-записи `panel`, `bot`, `@` → IP управляющего VPS.
+Для IP `203.0.113.10`:
 
----
+- Control: `https://203.0.113.10.sslip.io`;
+- Dashboard: `https://203.0.113.10.sslip.io/admin`;
+- Panel: `https://panel.203.0.113.10.sslip.io`;
 
-## 1. Подготовка сервера
+`sslip.io` резолвит hostname в указанный IP, а Caddy получает TLS-сертификаты.
+
+## 1. Безопасная подготовка VPS
+
+На Mac:
 
 ```bash
-ssh root@SERVER_IP
-apt update && apt -y upgrade
-curl -fsSL https://get.docker.com | sh        # Docker + compose plugin
-apt -y install git ufw
-ufw allow 22,80,443/tcp && ufw --force enable
+scp -i ~/.ssh/hamalivpn_control \
+  ~/.ssh/hamalivpn_control.pub \
+  infra/bootstrap-control.sh \
+  root@SERVER_IP:/root/
+
+ssh root@SERVER_IP 'bash /root/bootstrap-control.sh'
 ```
 
----
-
-## 2. Панель Remnawave
-
-Установить по официальной инструкции (команда инсталлятора — на **docs.rw**, сверить актуальную):
-
-1. Запустить установщик панели, поднять на `panel.hamalivpn.com` (SSL ставится автоматически).
-2. Открыть панель → создать **первого админа**.
-3. Settings → **API Tokens** → создать токен → это `REMNAWAVE_API_KEY`.
-4. `REMNAWAVE_API_URL = https://panel.hamalivpn.com`.
-
-> Ноды пока не добавляем — панель работает и пустая, бот к ней цепляется. Боевые ноды (Cherry/AlexHost) добавим в Фазе 6, и они автоматически попадут в подписки.
-
----
-
-## 3. Бот Bedolaga
+Проверить новый доступ:
 
 ```bash
-cd /opt
-git clone https://github.com/BEDOLAGA-DEV/remnawave-bedolaga-telegram-bot.git
-cd remnawave-bedolaga-telegram-bot
+ssh -i ~/.ssh/hamalivpn_control hamaliadmin@SERVER_IP
+```
+
+После успешной проверки отключить парольный/root-вход:
+
+```bash
+scp -i ~/.ssh/hamalivpn_control \
+  infra/harden-ssh.sh \
+  hamaliadmin@SERVER_IP:/tmp/
+
+ssh -i ~/.ssh/hamalivpn_control hamaliadmin@SERVER_IP \
+  'sudo bash /tmp/harden-ssh.sh'
+```
+
+## 2. Загрузить код
+
+```bash
+sudo install -d -o hamaliadmin -g hamaliadmin /opt/hamalivpn
+git clone https://github.com/uclam0556-glitch/vpn.git /opt/hamalivpn
+cd /opt/hamalivpn
+```
+
+## 3. Remnawave
+
+```bash
+sudo bash infra/install-remnawave.sh SERVER_IP
+```
+
+Скрипт использует официальный `docker-compose-prod.yml`, генерирует секреты и
+настраивает `panel.SERVER_IP.sslip.io`.
+
+## 4. HamaliVpn Control
+
+```bash
 cp .env.example .env
+nano .env
 ```
 
-Перенести значения из нашего шаблона [`bot/.env.hamali.example`](../bot/.env.hamali.example) в `.env`. Сгенерировать секреты:
+Заполнить на сервере:
+
+- `BOT_TOKEN`;
+- `ADMIN_TELEGRAM_IDS`;
+- `ADMIN_PASSWORD`;
+- `POSTGRES_PASSWORD`;
+- `SESSION_SECRET`.
+
+Первый запуск:
 
 ```bash
-openssl rand -hex 32   # для WEBHOOK_SECRET_TOKEN
-openssl rand -hex 32   # для WEB_API_DEFAULT_TOKEN
-openssl rand -hex 16   # для POSTGRES_PASSWORD
+sudo bash infra/deploy-hamalivpn.sh SERVER_IP
 ```
 
-Запуск:
+На первом этапе `REMNAWAVE_MOCK=true`: можно проверить dashboard и поведение
+бота, но импортированная подписка не содержит VPN-ноды.
+
+## 5. Связать с Remnawave
+
+1. Открыть `https://panel.SERVER_IP.sslip.io`.
+2. Создать первого администратора.
+3. Settings → API Tokens → создать токен для `HamaliVpn Control`.
+4. Создать internal squad `CHECHNYA-LAB`.
+5. В `.env` заполнить:
+
+```dotenv
+REMNAWAVE_MOCK=false
+REMNAWAVE_API_TOKEN=...
+REMNAWAVE_INTERNAL_SQUADS=UUID_SQUAD
+```
+
+6. Перезапустить:
 
 ```bash
-docker compose up -d
+docker compose up -d control bot maintenance
+```
+
+## 6. Проверка
+
+```bash
 docker compose ps
-docker compose logs -f bot
+docker compose logs --tail=100 control
+docker compose logs --tail=100 bot
+curl -fsS https://SERVER_IP.sslip.io/health
 ```
 
-Сервисы: `bot` (Python, :8080), `postgres` (:5432), `redis` (:6379) в сети `bot_network`.
+В Telegram:
 
-### Reverse proxy (HTTPS для вебхука)
+1. `/start`;
+2. «Получить тест на 90 минут»;
+3. «Подключить устройство»;
+4. импорт в Hiddify/v2rayTun;
+5. проверить пользователя и лимиты в Remnawave.
 
-Caddy перед ботом — маршрут `bot.hamalivpn.com` → `remnawave_bot:8080`. Caddyfile:
+## Резервное копирование
 
+Минимум ежедневно:
+
+```bash
+docker compose exec -T postgres \
+  pg_dump -U hamalivpn hamalivpn \
+  | gzip > /opt/hamalivpn/backups/hamalivpn-$(date +%F).sql.gz
+
+docker exec remnawave-db \
+  pg_dump -U postgres postgres \
+  | gzip > /opt/hamalivpn/backups/remnawave-$(date +%F).sql.gz
 ```
-bot.hamalivpn.com {
-    reverse_proxy remnawave_bot:8080
-}
-```
 
-(Caddy подключить в ту же docker-сеть; SSL он берёт сам через Let's Encrypt.)
-
----
-
-## 4. Тарифы и лимиты (веб-админка)
-
-Открыть вебадминку Bedolaga → задать тарифы под наш лендинг:
-
-| Тариф | Период | Цена | Устройства |
-|---|---|---|---|
-| Старт | 30 дн | 349 ₽ | 2 |
-| 3 месяца | 90 дн | 899 ₽ | 3 |
-| Год | 365 дн | 2 990 ₽ | 5 |
-
-Триал: 3 дня, 20 ГБ, 1 устройство (`TRIAL_*` в env уже выставлены).
-
----
-
-## 5. Реферальная программа (100 ₽)
-
-В env уже: `REFERRAL_INVITER_BONUS_KOPEKS=10000` → пригласивший получает **100 ₽** за клиента, вывод от 300 ₽. Проверить тумблер в админке.
-
----
-
-## 6. Платежи
-
-**Telegram Stars** — `TELEGRAM_STARS_ENABLED=true`. Без ИП, юзер платит картой через Telegram, вывод средств — через Fragment/TON.
-
-**Platega (СБП/QR/карты)** — зарегистрироваться в Platega, получить `MERCHANT_ID` + `SECRET`, вписать в `.env`, указать webhook на `https://bot.hamalivpn.com/...` (URL колбэка — из доков Platega/Bedolaga). Перезапустить: `docker compose up -d bot`.
-
----
-
-## 7. Тест end-to-end
-
-1. Зайти в бота → выбрать тариф → оплатить (Stars — реальный мелкий платёж, или тестовый режим Platega).
-2. Проверить: в Remnawave появился пользователь, бот выдал ссылку-подписку + QR.
-3. Импортировать в v2rayTun/Hiddify по кнопке автоподключения.
-4. Проверить уведомление об окончании и автопродление.
-
----
-
-## 8. Связать с лендингом
-
-1. В [`landing/index.html`](../landing/index.html) заменить все `https://t.me/HamaliVpnBot` на реальный `@username`.
-2. Задеплоить лендинг на Cloudflare Pages / Vercel, привязать `hamalivpn.com`.
-
----
-
-## 9. Эксплуатация
-
-- Логи: `docker compose logs -f bot`
-- Бэкап БД: `docker compose exec postgres pg_dump -U bedolaga bedolaga > backup.sql`
-- Обновление бота: `git pull && docker compose up -d --build`
-- Мониторинг управляющего VPS + аптайм-бот в Telegram.
-
----
-
-## Что мне (ассистенту) прислать, чтобы продолжить
-
-- `@username` бота — **впишу во все кнопки лендинга** (не секрет).
-- Твой `ADMIN_IDS` (числовой Telegram ID) — не секрет.
-- IP/домен управляющего VPS, когда поднимешь.
-- `BOT_TOKEN`, ключи Platega — **держи в `.env` на сервере, в чат не вставляй.**
+Копии необходимо отправлять offsite; резерв на том же VPS не защищает от
+потери сервера.

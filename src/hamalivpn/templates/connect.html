@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Подключение · HamaliVpn{% endblock %}
+{% block body %}
+<main class="connect-shell">
+  <section class="connect-card">
+    <div class="brand brand-center"><span class="brand-mark">H</span><span>HamaliVpn</span></div>
+    <div class="connection-orb {{ 'orb-off' if expired else '' }}">
+      <span class="orb-ring"></span><span class="orb-core"></span>
+    </div>
+    {% if expired %}
+      <div class="eyebrow">Доступ завершён</div>
+      <h1>Подписка истекла</h1>
+      <p class="muted">Откройте Telegram-бот и продлите доступ.</p>
+    {% else %}
+      <div class="eyebrow">Подписка готова</div>
+      <h1>Подключите устройство</h1>
+      <p class="muted">Выберите приложение — профиль импортируется автоматически.</p>
+      <div class="app-buttons">
+        <a class="app-button primary" href="{{ hiddify_link }}"><span class="app-glyph">H</span><span><b>Открыть в Hiddify</b><small>iOS · Android · Windows · macOS</small></span></a>
+        <a class="app-button" href="{{ v2raytun_link }}"><span class="app-glyph">V</span><span><b>Открыть в v2rayTun</b><small>iOS · Android · Desktop</small></span></a>
+      </div>
+      <details class="manual">
+        <summary>Подключить вручную</summary>
+        {% if qr %}<img class="qr" src="{{ qr }}" alt="QR-код подписки">{% endif %}
+        <div class="copy-field"><input id="sub-url" readonly value="{{ subscription_url }}"><button data-copy="#sub-url">Копировать</button></div>
+      </details>
+    {% endif %}
+    <div class="access-stats">
+      <span><small>Устройства</small><b>{{ subscription.device_limit }}</b></span>
+      <span><small>Трафик</small><b>{{ subscription.traffic_limit_gb }} ГБ</b></span>
+      <span><small>Действует до</small><b>{{ subscription.expires_at.strftime("%d.%m %H:%M") }}</b></span>
+    </div>
+    <a class="support-link" href="https://t.me/{{ support_username.lstrip('@') }}">Нужна помощь? Открыть поддержку</a>
+  </section>
+</main>
+{% endblock %}

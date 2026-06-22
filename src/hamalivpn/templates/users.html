@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Пользователи · HamaliVpn Control{% endblock %}
+{% block body %}
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">H</span><span>HamaliVpn <small>Control</small></span></div>
+    <nav>
+      <a class="nav-link" href="/admin"><span>Обзор</span><kbd>01</kbd></a>
+      <a class="nav-link active" href="/admin/users"><span>Пользователи</span><kbd>02</kbd></a>
+    </nav>
+    <div class="sidebar-foot"><a class="button button-ghost" href="/admin">Назад к обзору</a></div>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div><div class="eyebrow">Клиентская база</div><h1>Пользователи</h1></div></header>
+    <section class="user-grid">
+      {% for customer in customers %}
+      <article class="user-card">
+        <div class="user-card-head">
+          <span class="avatar avatar-large">{{ customer.full_name[:1] or "H" }}</span>
+          <div><h3>{{ customer.full_name or "Без имени" }}</h3><p>@{{ customer.telegram_username or customer.telegram_id }}</p></div>
+          <span class="badge {{ 'badge-disabled' if customer.is_blocked else 'badge-active' }}">{{ "blocked" if customer.is_blocked else "active" }}</span>
+        </div>
+        <div class="user-meta">
+          <span>Telegram ID <b>{{ customer.telegram_id }}</b></span>
+          <span>Триал <b>{{ "использован" if customer.trial_used else "доступен" }}</b></span>
+          <span>Подписок <b>{{ customer.subscriptions|length }}</b></span>
+        </div>
+        {% for sub in customer.subscriptions %}
+        <div class="sub-row">
+          <span>{{ sub.plan_code }} · {{ sub.device_limit }} устр.</span>
+          <span class="badge badge-{{ sub.status.value }}">{{ sub.status.value }}</span>
+        </div>
+        {% endfor %}
+      </article>
+      {% else %}
+      <div class="empty-state"><h2>Пока тихо</h2><p>Пользователи появятся после запуска Telegram-бота.</p></div>
+      {% endfor %}
+    </section>
+  </main>
+</div>
+{% endblock %}

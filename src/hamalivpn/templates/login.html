@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Вход · HamaliVpn Control{% endblock %}
+{% block body %}
+<main class="login-shell">
+  <section class="login-panel">
+    <div class="brand brand-large">
+      <span class="brand-mark">H</span>
+      <span>HamaliVpn <small>Control</small></span>
+    </div>
+    <div class="eyebrow">Защищённый контур управления</div>
+    <h1>Добро пожаловать</h1>
+    <p class="muted">Подписки, пользователи и инфраструктура в одном пространстве.</p>
+    {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+    <form method="post" action="/admin/login" class="form-stack">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label>
+        <span>Логин</span>
+        <input name="username" autocomplete="username" required>
+      </label>
+      <label>
+        <span>Пароль</span>
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      <button class="button button-primary" type="submit">Войти в систему</button>
+    </form>
+    <div class="security-note"><span class="status-dot"></span> Сессия защищена HTTP-only cookie</div>
+  </section>
+</main>
+{% endblock %}

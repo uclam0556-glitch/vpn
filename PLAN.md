@@ -21,16 +21,16 @@
    ┌────┴─────┐
 Telegram-бот   Сайт-лендинг
    └────┬─────┘
-   Приём оплаты  (Platega: СБП/QR · Telegram Stars)
+   Приём оплаты  (следующая фаза)
         │
-   Bedolaga — ядро  (бот · вебадминка · рефералы · автопродление · БД)
+   HamaliVpn Control  (FastAPI · aiogram · dashboard · PostgreSQL · Redis)
         │  REST API
    Remnawave (панель)  ──→  страница подписки + автоподключение (deeplink по ОС)
         │
    VPN-ноды (Reality+Vision / Hysteria2)   ← подключаем позже
 ```
 
-Полный цикл без ручного труда: клиент выбирает тариф → платит → вебхук → Bedolaga создаёт юзера в Remnawave по API → отдаёт подписку + QR + кнопку автоподключения → реферал получает бонус → крон сам напоминает и продлевает.
+Первый готовый цикл: клиент запускает Telegram-бота → получает одноразовый тест → HamaliVpn Control создаёт пользователя в Remnawave по официальному API → отдаёт страницу подключения, QR и deeplink → maintenance worker отключает доступ по сроку. Платежи и рефералы добавляются после проверки нод.
 
 ## 3. Зафиксированный стек
 
@@ -38,24 +38,24 @@ Telegram-бот   Сайт-лендинг
 |---|---|---|
 | Протоколы | **VLESS + Reality (XTLS-Vision)** + **Hysteria2** | Reality — база, Hysteria2 — скорость/пробитие троттлинга |
 | Панель | **Remnawave** | Мультинод, одна подписка, HWID, страница автоподключения |
-| Ядро продаж | **Bedolaga** (`remnawave-bedolaga-telegram-bot`) | Бот + веб-кабинет + вебадминка + рефералы + триал + автопродление |
-| Оплата | **Platega** (СБП/QR/карты) + **Telegram Stars** | Без ИП, автоматический вебхук. Позже — самозанятость + ЮKassa |
-| Лендинг | Кастом (Astro/Next + Tailwind) | Здесь делаем «мировой уровень красоты» |
+| Control-plane | **Собственный HamaliVpn Control** | FastAPI + aiogram + PostgreSQL + Redis + dashboard + maintenance |
+| Оплата | Следующая фаза: Telegram Stars / легальный эквайринг | Не включаем до проверки качества VPN-нод |
+| Лендинг | Кастомный статический WebGL-лендинг | Размещён в Cloudflare Workers Static Assets |
 | Автоподключение | deeplinks `v2raytun://` `hiddify://` `streisand://` `clash://` | Кнопка «Подключить» по ОС |
-| Управляющий хост | 1 дешёвый VPS (~$5–10/мес) | Отдельно от VPN-нод |
+| Управляющий хост | **OVHcloud VPS-1: 2 vCPU / 4 ГБ / 40 ГБ SSD** | Европа, Ubuntu 24.04 x86_64; отдельно от VPN-нод |
 
 ## 3a. Карта деплоя (где что хостится)
 
 | Компонент | Где | Домен | Цена |
 |---|---|---|---|
-| Лендинг (сайт) | Cloudflare Pages | `hamalivpn.com` | бесплатно |
-| Remnawave (админка панели) | control-VPS (Oracle Free) | `panel.hamalivpn.com` | бесплатно |
-| Bedolaga (бот + вебадминка + Mini App) | тот же control-VPS (Docker) | `bot.hamalivpn.com` | бесплатно |
-| Postgres + Redis | тот же control-VPS (внутри Docker) | — | бесплатно |
+| Лендинг (сайт) | Cloudflare Workers Static Assets | `hamalivpn.com` | бесплатно на старте |
+| Remnawave (админка панели) | OVHcloud control-VPS | `panel.hamalivpn.com` | входит в VPS |
+| HamaliVpn Control (бот + dashboard + connect page) | тот же OVHcloud control-VPS (Docker) | временно `IP.sslip.io` | входит в VPS |
+| PostgreSQL + Redis | тот же OVHcloud control-VPS (внутри Docker) | — | входит в VPS |
 | Страница подписки | Remnawave за Cloudflare-прокси | `sub.hamalivpn.com` | бесплатно |
 | VPN-ноды | отдельные чистые VPS (Cherry/AlexHost) | — | позже |
 
-Control-VPS: **Oracle Cloud Always Free** (2 vCPU / 12 ГБ ARM, 10 ТБ/мес). Cloudflare-прокси перед `panel.`/`sub.` прячет IP и держит доступ из РФ. Railway не используем (платный per-usage, Remnawave под него не заточен).
+Control-VPS: **OVHcloud VPS-1, 2 vCPU / 4 ГБ / 40 ГБ SSD**, европейская локация, Ubuntu 24.04 x86_64. Ориентир официальной цены на 22 июня 2026 года — $4.54/мес без налогов; ежедневная резервная копия включена. Cloudflare используется для DNS и публичных веб-интерфейсов; база данных и Redis наружу не публикуются. При устойчивой нагрузке выше возможностей VPS выполняется вертикальное увеличение тарифа без смены архитектуры.
 
 ## 4. Хостинг VPN-нод (позже)
 
@@ -73,17 +73,19 @@ Control-VPS: **Oracle Cloud Always Free** (2 vCPU / 12 ГБ ARM, 10 ТБ/мес)
 
 - [x] **Ф0. Бренд** — HamaliVpn ✅
 - [x] **Ф5a. Лендинг** — `landing/index.html` (3D-глобус, кастом-иконки, лого) ✅
-- [~] **Ф1–Ф3. Деплой + поведение готовы** — `bot/.env.hamali.example`, `docs/DEPLOY.md`, `docs/BOT_BEHAVIOR.md` (спецификация), `bot/tariffs.hamali.json` (тарифы), `bot/branding/texts.ru.md` (тексты). @username `@HamaliVpn_bot` зашит в лендинг. Ждём: управляющий VPS, домен, BOT_TOKEN, ADMIN_IDS, ключи Platega.
+- [x] **Ф1a. Код control-plane** — backend, Telegram-бот, dashboard, PostgreSQL-модели, Remnawave API adapter, connect page, QR/deeplink, maintenance worker и тесты готовы.
+- [~] **Ф1b. Сервер** — OVHcloud VPS-1 куплен; ждём активацию/IP и выполняем `docs/DEPLOY.md`.
 - [ ] **Ф1. Фундамент** — поднять управляющий VPS + Docker, установить Remnawave, получить API-токен.
-- [ ] **Ф2. Ядро** — развернуть Bedolaga по `docs/DEPLOY.md`, связать с Remnawave, тарифы (349/899/2990), рефералы 100 ₽, триал 3 дня.
-- [ ] **Ф3. Оплата** — Platega + Telegram Stars, тестовая покупка end-to-end.
+- [ ] **Ф2. Первый E2E-тест** — запустить `@HamaliVpn_bot`, создать тест на 90 минут, подключить временную ноду и импортировать ссылку в приложение.
+- [ ] **Ф3. Коммерция** — после проверки нод добавить тарифы, платежи, рефералы и продление.
 - [ ] **Ф4. Автоподключение** — страница подписки Remnawave + deeplinks, импорт в v2rayTun/Hiddify.
-- [ ] **Ф5b. Связать лендинг** — реальный @username в кнопки, деплой на Cloudflare Pages.
+- [x] **Ф5b. Связать лендинг** — `@HamaliVpn_bot` в кнопках, деплой через Cloudflare Workers Static Assets.
 - [ ] **Ф6. Боевые ноды** — Cherry/AlexHost/UpCloud в Remnawave, тест из Грозного.
+- [ ] **Ф6a. A/B-тест географии** — Gcore Frankfurt-2 и Istanbul, одинаковые VM 2 vCPU / 4 ГБ, по сценарию `docs/NODE_TEST_PLAN.md`.
 
 ## 6. Что нужно от владельца
 
-1. **Управляющий VPS** (1 шт, любой чистый, ~$5–10) — куда ставим панель+бот+БД.
+1. **Управляющий VPS** — OVHcloud VPS-1, 2 vCPU / 4 ГБ / 40 ГБ SSD, Европа, Ubuntu 24.04 x86_64.
 2. **Домен** (для лендинга и подписки) + загранкарта для регистрации.
 3. **Бот** в @BotFather → токен.
 4. **Бренд** — рабочее название (или выбрать из предложенных).
@@ -94,10 +96,9 @@ Control-VPS: **Oracle Cloud Always Free** (2 vCPU / 12 ГБ ARM, 10 ТБ/мес)
 - **Название: HamaliVpn** ✅
 - Лендинг: `landing/index.html` — кастом, WebGL 3D-глобус (Three.js) + 3D-телефон, тёмный премиум-визуал. Самодостаточный файл.
 - Тарифы (черновик): Старт 349 ₽/мес · 3 мес 899 ₽ · Год 2 990 ₽. Безлимит трафика, 2–5 устройств.
-- CTA ведут на `https://t.me/HamaliVpnBot` — заменить на реальный @username бота.
+- CTA ведут на `https://t.me/HamaliVpn_bot`.
 
 ## 8. Открытые вопросы
 
-- Реальный @username Telegram-бота (для ссылок на лендинге).
 - Доменная зона (.com / .io / др.).
 - Финализировать тарифную сетку и лимиты устройств/трафика.

@@ -1,0 +1,107 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hamalivpn}
+      POSTGRES_USER: ${POSTGRES_USER:-hamalivpn}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-hamalivpn} -d ${POSTGRES_DB:-hamalivpn}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+  control:
+    build: .
+    restart: unless-stopped
+    command: ["sh", "-c", "alembic upgrade head && uvicorn hamalivpn.app:app --host 0.0.0.0 --port 8080"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hamalivpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hamalivpn}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    networks: [backend, remnawave]
+
+  bot:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "hamalivpn.bot"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hamalivpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hamalivpn}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      control:
+        condition: service_healthy
+    networks: [backend, remnawave]
+
+  maintenance:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "hamalivpn.maintenance"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-hamalivpn}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hamalivpn}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      control:
+        condition: service_healthy
+    networks: [backend, remnawave]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST}
+      PANEL_HOST: ${PANEL_HOST:?Set PANEL_HOST}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      control:
+        condition: service_healthy
+    networks: [backend, remnawave]
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  backend:
+    driver: bridge
+  remnawave:
+    external: true
+    name: remnawave-network

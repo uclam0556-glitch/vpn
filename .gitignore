@@ -15,6 +15,13 @@ Thumbs.db
 *.log
 logs/
 data/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.pyc
+*.db
+*.sqlite*
 
 # Node (если у лендинга появится сборка)
 node_modules/
