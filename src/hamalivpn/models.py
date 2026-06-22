@@ -57,9 +57,7 @@ class Customer(Base):
 class Subscription(Base):
     __tablename__ = "subscriptions"
 
-    id: Mapped[str] = mapped_column(
-        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
-    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
     plan_code: Mapped[str] = mapped_column(String(32), default="trial")
     status: Mapped[SubscriptionStatus] = mapped_column(
@@ -72,6 +70,14 @@ class Subscription(Base):
     device_limit: Mapped[int] = mapped_column(Integer, default=1)
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    health_status: Mapped[str] = mapped_column(String(16), default="unknown")
+    health_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    health_endpoint_count: Mapped[int] = mapped_column(Integer, default=0)
+    health_reachable_count: Mapped[int] = mapped_column(Integer, default=0)
+    health_response_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    health_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow

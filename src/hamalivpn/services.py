@@ -1,13 +1,14 @@
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
 from .remnawave import RemnawaveGateway
 from .schemas import TrialResult
+from .subscription_health import SubscriptionProbeResult, probe_subscription_url
 
 
 class TrialAlreadyUsedError(RuntimeError):
@@ -172,6 +173,131 @@ async def issue_trial(
     )
 
 
+async def record_subscription_health(
+    session: AsyncSession,
+    subscription: Subscription,
+    settings: Settings,
+    *,
+    actor: str,
+) -> SubscriptionProbeResult:
+    previous_status = subscription.health_status
+    if not subscription.subscription_url:
+        result = SubscriptionProbeResult(
+            status="empty",
+            message="Ссылка подписки отсутствует",
+            endpoint_count=0,
+            reachable_count=0,
+            response_ms=None,
+        )
+    else:
+        result = await probe_subscription_url(
+            subscription.subscription_url,
+            timeout_seconds=settings.subscription_probe_timeout_seconds,
+            user_agent=settings.subscription_probe_user_agent,
+        )
+
+    subscription.health_status = result.status
+    subscription.health_message = result.message
+    subscription.health_endpoint_count = result.endpoint_count
+    subscription.health_reachable_count = result.reachable_count
+    subscription.health_response_ms = result.response_ms
+    subscription.health_checked_at = datetime.now(UTC)
+    if previous_status != result.status:
+        session.add(
+            AuditLog(
+                actor=actor,
+                action=f"subscription.health.{result.status}",
+                entity_type="subscription",
+                entity_id=subscription.id,
+                details={
+                    "previous_status": previous_status,
+                    "message": result.message,
+                    "endpoint_count": result.endpoint_count,
+                    "reachable_count": result.reachable_count,
+                    "response_ms": result.response_ms,
+                },
+            )
+        )
+    await session.commit()
+    return result
+
+
+async def refresh_subscription_access(
+    session: AsyncSession,
+    gateway: RemnawaveGateway,
+    settings: Settings,
+    subscription: Subscription,
+    *,
+    actor: str,
+) -> SubscriptionProbeResult:
+    if not subscription.remnawave_uuid:
+        raise SubscriptionNotFoundError
+
+    minimum_expiry = datetime.now(UTC) + timedelta(days=settings.test_access_days)
+    expires_at = max(as_utc(subscription.expires_at), minimum_expiry)
+    remote = await gateway.update_user_access(
+        user_uuid=subscription.remnawave_uuid,
+        expires_at=expires_at,
+        device_limit=subscription.device_limit,
+        traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
+        squads=settings.squad_uuids,
+    )
+    subscription.status = SubscriptionStatus.active
+    subscription.expires_at = expires_at
+    subscription.subscription_url = remote.subscription_url
+    subscription.remnawave_short_uuid = remote.short_uuid
+    session.add(
+        AuditLog(
+            actor=actor,
+            action="subscription.refreshed",
+            entity_type="subscription",
+            entity_id=subscription.id,
+            details={"remnawave_uuid": remote.uuid},
+        )
+    )
+    await session.commit()
+    return await record_subscription_health(
+        session,
+        subscription,
+        settings,
+        actor=actor,
+    )
+
+
+async def rotate_subscription_link(
+    session: AsyncSession,
+    gateway: RemnawaveGateway,
+    settings: Settings,
+    subscription: Subscription,
+    *,
+    actor: str,
+) -> SubscriptionProbeResult:
+    if not subscription.remnawave_uuid:
+        raise SubscriptionNotFoundError
+    remote = await gateway.revoke_subscription(subscription.remnawave_uuid)
+    if remote is None:
+        raise SubscriptionNotFoundError
+    subscription.subscription_url = remote.subscription_url
+    subscription.remnawave_short_uuid = remote.short_uuid
+    subscription.status = SubscriptionStatus.active
+    session.add(
+        AuditLog(
+            actor=actor,
+            action="subscription.link_rotated",
+            entity_type="subscription",
+            entity_id=subscription.id,
+            details={"remnawave_uuid": remote.uuid},
+        )
+    )
+    await session.commit()
+    return await record_subscription_health(
+        session,
+        subscription,
+        settings,
+        actor=actor,
+    )
+
+
 async def get_latest_subscription(session: AsyncSession, telegram_id: int) -> Subscription | None:
     statement = (
         select(Subscription)
@@ -213,18 +339,67 @@ async def disable_subscription(
 
 
 async def dashboard_metrics(session: AsyncSession) -> dict[str, int]:
-    customers = (await session.scalars(select(Customer))).all()
-    subscriptions = (await session.scalars(select(Subscription))).all()
     now = datetime.now(UTC)
+    customers = await session.scalar(select(func.count(Customer.id)))
+    subscriptions = await session.scalar(select(func.count(Subscription.id)))
+    active = await session.scalar(
+        select(func.count(Subscription.id)).where(
+            Subscription.status == SubscriptionStatus.active,
+            Subscription.expires_at > now,
+        )
+    )
+    trials = await session.scalar(
+        select(func.count(Subscription.id)).where(Subscription.plan_code == "trial")
+    )
+    healthy = await session.scalar(
+        select(func.count(Subscription.id)).where(
+            Subscription.status == SubscriptionStatus.active,
+            Subscription.health_status == "healthy",
+        )
+    )
+    unhealthy = await session.scalar(
+        select(func.count(Subscription.id)).where(
+            Subscription.status == SubscriptionStatus.active,
+            Subscription.health_status.in_(("empty", "degraded", "unreachable")),
+        )
+    )
     return {
-        "customers": len(customers),
-        "subscriptions": len(subscriptions),
-        "active": sum(
-            item.status == SubscriptionStatus.active and as_utc(item.expires_at) > now
-            for item in subscriptions
-        ),
-        "trials": sum(item.plan_code == "trial" for item in subscriptions),
+        "customers": customers or 0,
+        "subscriptions": subscriptions or 0,
+        "active": active or 0,
+        "trials": trials or 0,
+        "healthy": healthy or 0,
+        "unhealthy": unhealthy or 0,
     }
+
+
+async def check_due_subscription_health(
+    session: AsyncSession,
+    settings: Settings,
+) -> int:
+    threshold = datetime.now(UTC) - timedelta(seconds=settings.subscription_health_interval_seconds)
+    subscriptions = (
+        await session.scalars(
+            select(Subscription)
+            .where(
+                Subscription.status == SubscriptionStatus.active,
+                (
+                    (Subscription.health_checked_at.is_(None))
+                    | (Subscription.health_checked_at <= threshold)
+                ),
+            )
+            .order_by(Subscription.health_checked_at.asc().nullsfirst())
+            .limit(settings.subscription_health_batch_size)
+        )
+    ).all()
+    for subscription in subscriptions:
+        await record_subscription_health(
+            session,
+            subscription,
+            settings,
+            actor="system:health",
+        )
+    return len(subscriptions)
 
 
 async def expire_due_subscriptions(

@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     subscription_name: str = "HamaliVpn"
     hiddify_enabled: bool = True
     v2raytun_enabled: bool = True
+    subscription_probe_timeout_seconds: float = 8
+    subscription_health_interval_seconds: int = 300
+    subscription_health_batch_size: int = 25
+    subscription_probe_user_agent: str = "Happ/4.11.0/ios/2606031844510"
 
     @property
     def admin_ids(self) -> set[int]:

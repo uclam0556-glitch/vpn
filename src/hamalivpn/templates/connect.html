@@ -12,9 +12,21 @@
       <h1>Подписка истекла</h1>
       <p class="muted">Откройте Telegram-бот и продлите доступ.</p>
     {% else %}
-      <div class="eyebrow">Подписка готова</div>
+      <div class="eyebrow">
+        {% if health_status == "healthy" %}Проверено · {{ endpoint_count }} сервера
+        {% elif health_status == "degraded" %}Требуется проверка
+        {% else %}Подписка готова{% endif %}
+      </div>
       <h1>Подключите устройство</h1>
-      <p class="muted">Выберите приложение — профиль импортируется автоматически.</p>
+      <p class="muted">
+        {% if health_status == "healthy" %}
+          Конфигурация проверена сервером. Выберите приложение — профиль импортируется автоматически.
+        {% elif health_message %}
+          {{ health_message }}. Нажмите «Проверить и обновить» в Telegram-боте.
+        {% else %}
+          Выберите приложение — профиль импортируется автоматически.
+        {% endif %}
+      </p>
       <div class="app-buttons">
         <a class="app-button primary" href="{{ hiddify_link }}"><span class="app-glyph">H</span><span><b>Открыть в Hiddify</b><small>iOS · Android · Windows · macOS</small></span></a>
         <a class="app-button" href="{{ v2raytun_link }}"><span class="app-glyph">V</span><span><b>Открыть в v2rayTun</b><small>iOS · Android · Desktop</small></span></a>
@@ -29,7 +41,7 @@
     {% endif %}
     <div class="access-stats">
       <span><small>Устройства</small><b>{{ subscription.device_limit }}</b></span>
-      <span><small>Трафик</small><b>{{ subscription.traffic_limit_gb }} ГБ</b></span>
+      <span><small>Трафик</small><b>{{ "Безлимит" if subscription.traffic_limit_gb == 0 else subscription.traffic_limit_gb ~ " ГБ" }}</b></span>
       <span><small>Срок</small><b>Тестовый доступ</b></span>
     </div>
     <a class="support-link" href="https://t.me/{{ support_username.lstrip('@') }}">Нужна помощь? Открыть поддержку</a>

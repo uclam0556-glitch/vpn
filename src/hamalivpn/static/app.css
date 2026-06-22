@@ -65,8 +65,11 @@ h2 { font-size: 1.25rem; }
 .pulse { animation: pulse 2s infinite; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(85, 230, 165, 0); } }
 .metric-grid { display: grid; gap: 14px; grid-template-columns: repeat(4, 1fr); }
+.metric-grid-six { grid-template-columns: repeat(6, 1fr); }
 .metric-card { background: linear-gradient(145deg, rgba(20, 27, 40, .92), rgba(13, 18, 28, .92)); border: 1px solid var(--line); border-radius: 18px; min-height: 154px; overflow: hidden; padding: 22px; position: relative; }
 .metric-card.accent::after { background: var(--blue); border-radius: 50%; box-shadow: 0 0 60px 25px rgba(84, 120, 255, .2); content: ""; height: 6px; position: absolute; right: 22px; top: 24px; width: 6px; }
+.metric-card.metric-good strong { color: var(--green); }
+.metric-card.metric-bad strong { color: var(--red); }
 .metric-card span, .metric-card small { color: var(--muted); display: block; font-size: .72rem; }
 .metric-card strong { display: block; font-family: var(--display); font-size: 2.3rem; letter-spacing: -.06em; margin: 1.35rem 0 .35rem; }
 .content-grid { display: grid; gap: 14px; grid-template-columns: minmax(0, 2fr) minmax(280px, .75fr); margin-top: 14px; }
@@ -87,6 +90,11 @@ td { border-top: 1px solid var(--line); color: #c8cfda; font-size: .75rem; paddi
 .badge-pending { color: #ffd887; }
 .badge-disabled, .badge-revoked, .badge-expired { background: rgba(255, 107, 120, .08); color: #ff9aa4; }
 .table-action { background: transparent; border: 0; color: #ff939d; font-size: .68rem; }
+.table-action-good { color: var(--cyan); }
+.health-healthy { background: rgba(85, 230, 165, .08); color: #8bf0c0; }
+.health-empty, .health-unreachable, .health-degraded { background: rgba(255, 107, 120, .08); color: #ff9aa4; }
+.health-unknown { color: #ffd887; }
+.health-detail { color: var(--muted); display: block; font-size: .6rem; margin-top: .3rem; }
 .empty { color: var(--muted); padding: 2rem; text-align: center; }
 .timeline { display: grid; gap: 1rem; }
 .timeline-item { display: grid; gap: .7rem; grid-template-columns: 8px 1fr; }
@@ -142,7 +150,7 @@ td { border-top: 1px solid var(--line); color: #c8cfda; font-size: .75rem; paddi
   .app-shell { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .main { padding: 25px; }
-  .metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .metric-grid, .metric-grid-six { grid-template-columns: repeat(2, 1fr); }
   .content-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 620px) {

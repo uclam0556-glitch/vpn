@@ -25,6 +25,7 @@ from .services import (
     dashboard_metrics,
     disable_subscription,
     get_subscription_by_token,
+    refresh_subscription_access,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -92,6 +93,9 @@ async def connect_page(
             "streisand_link": streisand_deeplink(subscription_url),
             "expired": expires_at <= datetime.now(UTC),
             "support_username": settings.support_username,
+            "health_status": subscription.health_status,
+            "health_message": subscription.health_message,
+            "endpoint_count": subscription.health_endpoint_count,
         },
     )
 
@@ -221,4 +225,29 @@ async def admin_disable_subscription(
         )
     except SubscriptionNotFoundError as error:
         raise HTTPException(status_code=404, detail="Subscription not found") from error
+    return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/subscriptions/{subscription_id}/repair")
+async def admin_repair_subscription(
+    request: Request,
+    subscription_id: str,
+    session: SessionDep,
+    csrf: str = Form(...),
+) -> RedirectResponse:
+    redirect = admin_guard(request)
+    if redirect:
+        return redirect
+    verify_csrf(request, csrf)
+    subscription = await session.get(Subscription, subscription_id)
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    gateway = make_remnawave_gateway(settings)
+    await refresh_subscription_access(
+        session,
+        gateway,
+        settings,
+        subscription,
+        actor=f"admin:{settings.admin_username}",
+    )
     return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)

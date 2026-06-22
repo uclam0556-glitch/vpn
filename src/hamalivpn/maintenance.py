@@ -4,7 +4,7 @@ import logging
 from .config import get_settings
 from .db import SessionFactory, create_schema
 from .remnawave import RemnawaveError, make_remnawave_gateway
-from .services import expire_due_subscriptions
+from .services import check_due_subscription_health, expire_due_subscriptions
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,9 @@ async def main() -> None:
                 count = await expire_due_subscriptions(session, gateway)
                 if count:
                     logger.info("Expired %s subscriptions", count)
+                checked = await check_due_subscription_health(session, settings)
+                if checked:
+                    logger.info("Checked %s subscription health records", checked)
         except RemnawaveError:
             logger.exception("Maintenance could not reach Remnawave")
         except Exception:

@@ -23,11 +23,13 @@
       <div class="live-pill"><span class="pulse"></span> Live</div>
     </header>
 
-    <section class="metric-grid">
+    <section class="metric-grid metric-grid-six">
       <article class="metric-card"><span>Пользователи</span><strong>{{ metrics.customers }}</strong><small>в базе HamaliVpn</small></article>
       <article class="metric-card accent"><span>Активные</span><strong>{{ metrics.active }}</strong><small>действующие подписки</small></article>
       <article class="metric-card"><span>Все подписки</span><strong>{{ metrics.subscriptions }}</strong><small>за всё время</small></article>
       <article class="metric-card"><span>Тесты</span><strong>{{ metrics.trials }}</strong><small>выдано автоматически</small></article>
+      <article class="metric-card metric-good"><span>Проверены</span><strong>{{ metrics.healthy }}</strong><small>подписки с серверами</small></article>
+      <article class="metric-card metric-bad"><span>Проблемы</span><strong>{{ metrics.unhealthy }}</strong><small>требуют внимания</small></article>
     </section>
 
     <section class="content-grid">
@@ -35,16 +37,23 @@
         <div class="panel-head"><div><span class="eyebrow">Последняя активность</span><h2>Подписки</h2></div><a href="/admin/users">Все пользователи</a></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Клиент</th><th>План</th><th>Статус</th><th>До</th><th>Устройства</th><th></th></tr></thead>
+            <thead><tr><th>Клиент</th><th>План</th><th>Доступ</th><th>Конфигурация</th><th>Устройства</th><th></th></tr></thead>
             <tbody>
             {% for sub in subscriptions %}
               <tr>
                 <td><div class="identity"><span class="avatar">{{ sub.customer.full_name[:1] or "H" }}</span><div><b>{{ sub.customer.full_name or "Без имени" }}</b><small>@{{ sub.customer.telegram_username or sub.customer.telegram_id }}</small></div></div></td>
                 <td>{{ sub.plan_code }}</td>
                 <td><span class="badge badge-{{ sub.status.value }}">{{ sub.status.value }}</span></td>
-                <td>{{ sub.expires_at.strftime("%d.%m %H:%M") }}</td>
+                <td>
+                  <span class="badge health-{{ sub.health_status }}">{{ sub.health_status }}</span>
+                  <small class="health-detail">{{ sub.health_endpoint_count }} серверов{% if sub.health_response_ms %} · {{ sub.health_response_ms }} мс{% endif %}</small>
+                </td>
                 <td>{{ sub.device_limit }}</td>
                 <td>
+                  <form method="post" action="/admin/subscriptions/{{ sub.id }}/repair">
+                    <input type="hidden" name="csrf" value="{{ csrf }}">
+                    <button class="table-action table-action-good" type="submit">Проверить</button>
+                  </form>
                   {% if sub.status.value == "active" %}
                   <form method="post" action="/admin/subscriptions/{{ sub.id }}/disable">
                     <input type="hidden" name="csrf" value="{{ csrf }}">
