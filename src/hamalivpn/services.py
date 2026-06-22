@@ -34,7 +34,7 @@ async def get_or_create_customer(
     full_name: str,
 ) -> Customer:
     customer = await session.scalar(
-        select(Customer).where(Customer.telegram_id == telegram_id)
+        select(Customer).where(Customer.telegram_id == telegram_id).with_for_update()
     )
     if customer is None:
         customer = Customer(
@@ -67,10 +67,58 @@ async def issue_trial(
     )
     if customer.is_blocked:
         raise CustomerBlockedError
-    if customer.trial_used:
-        raise TrialAlreadyUsedError
+    expires_at = datetime.now(UTC) + timedelta(days=settings.test_access_days)
 
-    expires_at = datetime.now(UTC) + timedelta(minutes=settings.trial_duration_minutes)
+    if customer.trial_used:
+        existing = await session.scalar(
+            select(Subscription)
+            .where(
+                Subscription.customer_id == customer.id,
+                Subscription.plan_code == "trial",
+            )
+            .order_by(desc(Subscription.created_at))
+            .limit(1)
+            .with_for_update()
+        )
+        if existing is None or not existing.remnawave_uuid:
+            raise TrialAlreadyUsedError
+
+        remote = await gateway.update_user_access(
+            user_uuid=existing.remnawave_uuid,
+            expires_at=expires_at,
+            device_limit=settings.trial_device_limit,
+            traffic_limit_bytes=settings.trial_traffic_gb * 1024**3,
+            squads=settings.squad_uuids,
+        )
+        existing.status = SubscriptionStatus.active
+        existing.expires_at = expires_at
+        existing.device_limit = settings.trial_device_limit
+        existing.traffic_limit_gb = settings.trial_traffic_gb
+        existing.subscription_url = remote.subscription_url
+        existing.remnawave_short_uuid = remote.short_uuid
+        session.add(
+            AuditLog(
+                actor=f"telegram:{telegram_id}",
+                action="trial.extended",
+                entity_type="subscription",
+                entity_id=existing.id,
+                details={
+                    "remnawave_uuid": remote.uuid,
+                    "expires_at": expires_at.isoformat(),
+                },
+            )
+        )
+        await session.commit()
+        return TrialResult(
+            subscription_id=existing.id,
+            access_token=existing.access_token,
+            subscription_url=remote.subscription_url,
+            connect_url=(f"{settings.public_base_url.rstrip('/')}/connect/{existing.access_token}"),
+            expires_at=expires_at,
+            device_limit=settings.trial_device_limit,
+            traffic_limit_gb=settings.trial_traffic_gb,
+        )
+
     access_token = secrets.token_urlsafe(32)
     subscription = Subscription(
         customer=customer,
@@ -124,9 +172,7 @@ async def issue_trial(
     )
 
 
-async def get_latest_subscription(
-    session: AsyncSession, telegram_id: int
-) -> Subscription | None:
+async def get_latest_subscription(session: AsyncSession, telegram_id: int) -> Subscription | None:
     statement = (
         select(Subscription)
         .join(Customer)
@@ -137,12 +183,8 @@ async def get_latest_subscription(
     return await session.scalar(statement)
 
 
-async def get_subscription_by_token(
-    session: AsyncSession, token: str
-) -> Subscription | None:
-    return await session.scalar(
-        select(Subscription).where(Subscription.access_token == token)
-    )
+async def get_subscription_by_token(session: AsyncSession, token: str) -> Subscription | None:
+    return await session.scalar(select(Subscription).where(Subscription.access_token == token))
 
 
 async def disable_subscription(

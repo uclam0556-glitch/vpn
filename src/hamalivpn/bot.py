@@ -26,7 +26,7 @@ router = Router()
 
 def home_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Получить тест на 90 минут", callback_data="trial:create")
+    builder.button(text="Получить тестовый доступ", callback_data="trial:create")
     builder.button(text="Моя подписка", callback_data="subscription:show")
     builder.button(text="Как подключиться", callback_data="help:connect")
     builder.adjust(1)
@@ -57,7 +57,7 @@ async def start(message: Message) -> None:
         f"<b>HamaliVpn</b>\n\n"
         f"{name}, здесь можно получить доступ, подключить приложение и управлять "
         "подпиской без ручной настройки.\n\n"
-        "Для первого теста доступно 90 минут, 30 ГБ и одно устройство."
+        "На этапе тестирования доступ выдаётся без почасового ограничения."
     )
     await message.answer(text, reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
 
@@ -93,8 +93,7 @@ async def create_trial(callback: CallbackQuery) -> None:
             subscription = await session.get(Subscription, result.subscription_id)
     except TrialAlreadyUsedError:
         await callback.message.edit_text(
-            "Тестовый период уже использован. Откройте «Моя подписка», "
-            "если доступ ещё действует.",
+            "Не удалось восстановить старую подписку. Напишите в поддержку.",
             reply_markup=home_keyboard(),
         )
         return
@@ -112,10 +111,13 @@ async def create_trial(callback: CallbackQuery) -> None:
     if subscription is None:
         await callback.message.edit_text("Не удалось сохранить подписку.")
         return
+    traffic_label = (
+        "безлимитно" if result.traffic_limit_gb == 0 else f"{result.traffic_limit_gb} ГБ"
+    )
     await callback.message.edit_text(
-        "<b>Тестовый доступ готов</b>\n\n"
-        f"Срок: до {result.expires_at:%d.%m %H:%M} UTC\n"
-        f"Трафик: {result.traffic_limit_gb} ГБ\n"
+        "<b>Тестовый доступ активен</b>\n\n"
+        "Срок: без почасового ограничения\n"
+        f"Трафик: {traffic_label}\n"
         f"Устройства: {result.device_limit}\n\n"
         "Нажмите кнопку — страница определит приложение и предложит импорт.",
         reply_markup=subscription_keyboard(subscription),
@@ -139,7 +141,7 @@ async def show_subscription(callback: CallbackQuery) -> None:
     await callback.message.edit_text(
         "<b>Ваша подписка</b>\n\n"
         f"Статус: {html.escape(subscription.status.value)}\n"
-        f"Действует до: {subscription.expires_at:%d.%m.%Y %H:%M} UTC\n"
+        "Срок: без почасового ограничения\n"
         f"Устройства: {subscription.device_limit}",
         reply_markup=subscription_keyboard(subscription),
         parse_mode=ParseMode.HTML,

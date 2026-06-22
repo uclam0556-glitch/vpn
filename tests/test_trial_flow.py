@@ -7,7 +7,6 @@ from hamalivpn.config import Settings
 from hamalivpn.models import Customer, Subscription, SubscriptionStatus
 from hamalivpn.remnawave import MockRemnawaveClient
 from hamalivpn.services import (
-    TrialAlreadyUsedError,
     expire_due_subscriptions,
     issue_trial,
 )
@@ -18,14 +17,14 @@ def make_settings() -> Settings:
         database_url="sqlite+aiosqlite://",
         public_base_url="https://vpn.example.com",
         remnawave_mock=True,
-        trial_duration_minutes=90,
-        trial_traffic_gb=30,
+        test_access_days=3650,
+        trial_traffic_gb=0,
         trial_device_limit=1,
     )
 
 
 @pytest.mark.asyncio
-async def test_trial_is_issued_once_with_limits(session_factory) -> None:
+async def test_trial_is_reissued_by_extending_the_same_subscription(session_factory) -> None:
     settings = make_settings()
     gateway = MockRemnawaveClient(settings)
     async with session_factory() as session:
@@ -44,19 +43,24 @@ async def test_trial_is_issued_once_with_limits(session_factory) -> None:
         assert subscription is not None
         assert subscription.status == SubscriptionStatus.active
         assert subscription.device_limit == 1
-        assert subscription.traffic_limit_gb == 30
+        assert subscription.traffic_limit_gb == 0
         assert result.connect_url.host == "vpn.example.com"
+        original_subscription_id = result.subscription_id
 
     async with session_factory() as session:
-        with pytest.raises(TrialAlreadyUsedError):
-            await issue_trial(
-                session,
-                gateway,
-                settings,
-                telegram_id=777,
-                telegram_username="tester",
-                full_name="Test User",
-            )
+        renewed = await issue_trial(
+            session,
+            gateway,
+            settings,
+            telegram_id=777,
+            telegram_username="tester",
+            full_name="Test User",
+        )
+        subscription = await session.get(Subscription, renewed.subscription_id)
+        assert renewed.subscription_id == original_subscription_id
+        assert subscription is not None
+        assert subscription.status == SubscriptionStatus.active
+        assert subscription.traffic_limit_gb == 0
 
 
 @pytest.mark.asyncio

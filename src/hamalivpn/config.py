@@ -37,8 +37,10 @@ class Settings(BaseSettings):
     remnawave_mock: bool = True
     remnawave_internal_squads: str = ""
 
-    trial_duration_minutes: int = 90
-    trial_traffic_gb: int = 30
+    # Remnawave requires expireAt, so "unlimited during testing" is represented
+    # by a long-lived access period. Reissuing access extends the same user.
+    test_access_days: int = 3650
+    trial_traffic_gb: int = 0
     trial_device_limit: int = 1
 
     default_plan_code: str = "start"

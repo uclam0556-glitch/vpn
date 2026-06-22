@@ -28,6 +28,16 @@ class RemnawaveGateway(Protocol):
 
     async def disable_user(self, user_uuid: str) -> None: ...
 
+    async def update_user_access(
+        self,
+        *,
+        user_uuid: str,
+        expires_at: datetime,
+        device_limit: int,
+        traffic_limit_bytes: int,
+        squads: list[str],
+    ) -> RemoteUser: ...
+
     async def revoke_subscription(self, user_uuid: str) -> RemoteUser | None: ...
 
 
@@ -97,6 +107,27 @@ class RemnawaveClient:
     async def disable_user(self, user_uuid: str) -> None:
         await self._request("POST", f"/api/users/{user_uuid}/actions/disable")
 
+    async def update_user_access(
+        self,
+        *,
+        user_uuid: str,
+        expires_at: datetime,
+        device_limit: int,
+        traffic_limit_bytes: int,
+        squads: list[str],
+    ) -> RemoteUser:
+        payload = {
+            "uuid": user_uuid,
+            "status": "ACTIVE",
+            "expireAt": expires_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "hwidDeviceLimit": device_limit,
+            "trafficLimitBytes": traffic_limit_bytes,
+            "trafficLimitStrategy": "NO_RESET",
+            "activeInternalSquads": squads,
+        }
+        response = await self._request("PATCH", "/api/users", json=payload)
+        return self._parse_user(response)
+
     async def revoke_subscription(self, user_uuid: str) -> RemoteUser | None:
         response = await self._request(
             "POST",
@@ -125,9 +156,7 @@ class MockRemnawaveClient:
     ) -> RemoteUser:
         user_uuid = str(uuid.uuid4())
         short_uuid = secrets.token_urlsafe(10)
-        subscription_url = (
-            f"{self.settings.public_base_url.rstrip('/')}/demo/sub/{short_uuid}"
-        )
+        subscription_url = f"{self.settings.public_base_url.rstrip('/')}/demo/sub/{short_uuid}"
         return RemoteUser(
             uuid=user_uuid,
             short_uuid=short_uuid,
@@ -139,6 +168,24 @@ class MockRemnawaveClient:
 
     async def disable_user(self, user_uuid: str) -> None:
         return None
+
+    async def update_user_access(
+        self,
+        *,
+        user_uuid: str,
+        expires_at: datetime,
+        device_limit: int,
+        traffic_limit_bytes: int,
+        squads: list[str],
+    ) -> RemoteUser:
+        return RemoteUser(
+            uuid=user_uuid,
+            short_uuid=secrets.token_urlsafe(10),
+            username=f"mock_{user_uuid[:8]}",
+            subscription_url=(f"{self.settings.public_base_url.rstrip('/')}/demo/sub/{user_uuid}"),
+            expire_at=expires_at,
+            device_limit=device_limit,
+        )
 
     async def revoke_subscription(self, user_uuid: str) -> RemoteUser | None:
         return None

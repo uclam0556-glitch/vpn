@@ -76,7 +76,7 @@ Control-VPS: **OVHcloud VPS-1, 2 vCPU / 4 ГБ / 40 ГБ SSD**, европейс
 - [x] **Ф1a. Код control-plane** — backend, Telegram-бот, dashboard, PostgreSQL-модели, Remnawave API adapter, connect page, QR/deeplink, maintenance worker и тесты готовы.
 - [~] **Ф1b. Сервер** — OVHcloud VPS-1 куплен; ждём активацию/IP и выполняем `docs/DEPLOY.md`.
 - [ ] **Ф1. Фундамент** — поднять управляющий VPS + Docker, установить Remnawave, получить API-токен.
-- [ ] **Ф2. Первый E2E-тест** — запустить `@HamaliVpn_bot`, создать тест на 90 минут, подключить временную ноду и импортировать ссылку в приложение.
+- [ ] **Ф2. Первый E2E-тест** — запустить `@HamaliVpn_bot`, получить долгосрочный тестовый доступ, подключить временную ноду и импортировать ссылку в приложение.
 - [ ] **Ф3. Коммерция** — после проверки нод добавить тарифы, платежи, рефералы и продление.
 - [ ] **Ф4. Автоподключение** — страница подписки Remnawave + deeplinks, импорт в v2rayTun/Hiddify.
 - [x] **Ф5b. Связать лендинг** — `@HamaliVpn_bot` в кнопках, деплой через Cloudflare Workers Static Assets.

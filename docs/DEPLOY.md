@@ -124,7 +124,7 @@ curl -fsS https://SERVER_IP.sslip.io/health
 В Telegram:
 
 1. `/start`;
-2. «Получить тест на 90 минут»;
+2. «Получить тестовый доступ»;
 3. «Подключить устройство»;
 4. импорт в Hiddify/v2rayTun;
 5. проверить пользователя и лимиты в Remnawave.

@@ -51,3 +51,46 @@ async def test_create_user_matches_official_remnawave_contract() -> None:
 
     assert result.short_uuid == "short-token"
     assert result.subscription_url.endswith("/short-token")
+
+
+@pytest.mark.asyncio
+async def test_update_user_access_reactivates_existing_user() -> None:
+    user_uuid = "1e74ddcf-80c0-45ce-96ee-0338cab97b75"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == "/api/users"
+        payload = json.loads(request.content)
+        assert payload["uuid"] == user_uuid
+        assert payload["status"] == "ACTIVE"
+        assert payload["trafficLimitBytes"] == 0
+        assert payload["hwidDeviceLimit"] == 1
+        return httpx.Response(
+            200,
+            json={
+                "response": {
+                    "uuid": user_uuid,
+                    "shortUuid": "renewed-short-token",
+                    "username": "tg_123456_test",
+                    "subscriptionUrl": "https://panel.example/api/sub/renewed-short-token",
+                    "expireAt": payload["expireAt"],
+                    "hwidDeviceLimit": 1,
+                }
+            },
+        )
+
+    settings = Settings(
+        panel_base_url="https://panel.example",
+        remnawave_api_token="api-token",
+        remnawave_mock=False,
+    )
+    client = RemnawaveClient(settings, transport=httpx.MockTransport(handler))
+    result = await client.update_user_access(
+        user_uuid=user_uuid,
+        expires_at=datetime(2036, 6, 22, 20, 0, tzinfo=UTC),
+        device_limit=1,
+        traffic_limit_bytes=0,
+        squads=["87d08c48-13ad-4f60-bf35-a1e639d82af0"],
+    )
+
+    assert result.short_uuid == "renewed-short-token"

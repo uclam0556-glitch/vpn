@@ -214,7 +214,7 @@ echo "  1. В Remnawave Panel → Nodes — нода появится автом
 echo "     или статус станет 'Online' в течение 1-2 минут."
 echo "  2. Присвойте ноде имя (например: Gcore-Frankfurt)."
 echo "  3. Нажмите 'Configure Inbounds' — настройте VLESS Reality и Hysteria2."
-echo "  4. В Telegram боте нажмите 'Получить тест на 90 минут'."
+echo "  4. В Telegram боте нажмите 'Получить тестовый доступ'."
 echo "  5. Откройте 'Подключить устройство' → импортируйте в Hiddify или v2rayTun."
 echo
 echo -e "${BOLD}Полезные команды на ноде:${RESET}"
