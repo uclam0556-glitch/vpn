@@ -97,23 +97,20 @@ sudo bash infra/deploy-hamalivpn.sh SERVER_IP
 
 ## 5. Связать с Remnawave
 
-1. Открыть `https://panel.SERVER_IP.sslip.io`.
-2. Создать первого администратора.
-3. Settings → API Tokens → создать токен для `HamaliVpn Control`.
-4. Создать internal squad `CHECHNYA-LAB`.
-5. В `.env` заполнить:
-
-```dotenv
-REMNAWAVE_MOCK=false
-REMNAWAVE_API_TOKEN=...
-REMNAWAVE_INTERNAL_SQUADS=UUID_SQUAD
-```
-
-6. Перезапустить:
+1. Открыть `https://panel.SERVER_IP.sslip.io` — создать первого администратора.
+2. Settings → API Tokens → создать токен для `HamaliVpn Control`.
+3. Запустить скрипт привязки (токен запрашивается без отображения, проверяется
+   реальными запросами и записывается в `.env` автоматически):
 
 ```bash
-docker compose up -d control bot maintenance
+bash infra/verify-remnawave-token.sh
 ```
+
+4. Squad можно добавить сразу или позже (скрипт поддерживает повторный запуск).
+   Remnawave Panel → Nodes → Squads → Create Squad `CHECHNYA-LAB` → скопировать UUID.
+   При повторном запуске `verify-remnawave-token.sh` ввести тот же токен и UUID.
+
+5. Скрипт сам перезапустит `control`, `bot`, `maintenance`.
 
 ## 6. Проверка
 
@@ -148,3 +145,15 @@ docker exec remnawave-db \
 
 Копии необходимо отправлять offsite; резерв на том же VPS не защищает от
 потери сервера.
+
+## 7. Тестовые VPN-ноды
+
+Для добавления VPN-нод (тест на Gcore на 1 час) — смотрите полный runbook:
+
+```
+docs/NODE_TEST_PLAN.md
+```
+
+Ключевые скрипты:
+- `infra/install-node.sh` — установка ноды на любой Ubuntu VPS одной командой;
+- `infra/remove-node.sh` — чистое удаление ноды с чеклистом по Gcore.

@@ -119,6 +119,8 @@ td { border-top: 1px solid var(--line); color: #c8cfda; font-size: .75rem; paddi
 .app-button:hover { border-color: rgba(98, 228, 255, .3); transform: translateY(-1px); }
 .app-button.primary { background: linear-gradient(100deg, rgba(84, 120, 255, .22), rgba(98, 228, 255, .06)); border-color: rgba(98, 228, 255, .25); }
 .app-glyph { align-items: center; background: linear-gradient(145deg, var(--cyan), var(--blue)); border-radius: 12px; color: #07101b; display: inline-flex; flex: 0 0 auto; font-weight: 600; height: 42px; justify-content: center; width: 42px; }
+.app-glyph-happ { background: linear-gradient(145deg, #a78bfa, #7c3aed); color: #fff; }
+.app-glyph-streisand { background: linear-gradient(145deg, #fb923c, #ea580c); color: #fff; }
 .app-button b, .app-button small { display: block; }
 .app-button b { font-size: .82rem; }
 .app-button small { color: var(--muted); font-size: .63rem; margin-top: .3rem; }

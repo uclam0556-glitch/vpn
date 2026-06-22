@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import ensure_csrf, verify_credentials, verify_csrf
 from .config import get_settings
 from .db import create_schema, get_session
-from .deeplinks import hiddify_deeplink, v2raytun_deeplink
+from .deeplinks import hiddify_deeplink, happ_deeplink, streisand_deeplink, v2raytun_deeplink
 from .models import AuditLog, Customer, Subscription, as_utc
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
@@ -88,6 +88,8 @@ async def connect_page(
             "qr": qr_data_uri(subscription_url) if subscription_url else None,
             "hiddify_link": hiddify_deeplink(subscription_url, settings.subscription_name),
             "v2raytun_link": v2raytun_deeplink(subscription_url),
+            "happ_link": happ_deeplink(subscription_url),
+            "streisand_link": streisand_deeplink(subscription_url),
             "expired": expires_at <= datetime.now(UTC),
             "support_username": settings.support_username,
         },
