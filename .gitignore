@@ -1,0 +1,21 @@
+# Секреты — никогда не коммитим
+.env
+*.env
+!*.env.example
+bot/.env
+
+# OS / редакторы
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Логи и данные рантайма
+*.log
+logs/
+data/
+
+# Node (если у лендинга появится сборка)
+node_modules/
+dist/
