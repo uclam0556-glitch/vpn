@@ -13,8 +13,9 @@ def v2raytun_deeplink(subscription_url: str) -> str:
 
 def happ_deeplink(subscription_url: str) -> str:
     """Happ Proxy Utility — iOS, Android, Windows, macOS, Linux."""
-    encoded_url = quote(subscription_url, safe="")
-    return f"happ://sub/{encoded_url}"
+    import base64
+    encoded_url = base64.urlsafe_b64encode(subscription_url.encode()).decode().rstrip("=")
+    return f"happ://add/{encoded_url}"
 
 
 def streisand_deeplink(subscription_url: str) -> str:
