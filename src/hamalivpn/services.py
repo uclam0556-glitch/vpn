@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
-from .remnawave import RemnawaveGateway
+from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 from .schemas import TrialResult
 from .subscription_health import SubscriptionProbeResult, probe_subscription_url
 
@@ -235,13 +235,28 @@ async def refresh_subscription_access(
 
     minimum_expiry = datetime.now(UTC) + timedelta(days=settings.test_access_days)
     expires_at = max(as_utc(subscription.expires_at), minimum_expiry)
-    remote = await gateway.update_user_access(
-        user_uuid=subscription.remnawave_uuid,
-        expires_at=expires_at,
-        device_limit=subscription.device_limit,
-        traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
-        squads=settings.squad_uuids,
-    )
+    try:
+        remote = await gateway.update_user_access(
+            user_uuid=subscription.remnawave_uuid,
+            expires_at=expires_at,
+            device_limit=subscription.device_limit,
+            traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
+            squads=settings.squad_uuids,
+        )
+    except RemnawaveNotFoundError:
+        customer = await session.get(Customer, subscription.customer_id)
+        if customer is None:
+            raise SubscriptionNotFoundError from None
+        remote = await gateway.create_user(
+            username=_remote_username(customer.telegram_id),
+            telegram_id=customer.telegram_id,
+            expires_at=expires_at,
+            device_limit=subscription.device_limit,
+            traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
+            squads=settings.squad_uuids,
+            description=f"HamaliVpn repaired; local_subscription={subscription.id}",
+        )
+        subscription.remnawave_uuid = remote.uuid
     subscription.status = SubscriptionStatus.active
     subscription.expires_at = expires_at
     subscription.subscription_url = remote.subscription_url
@@ -415,7 +430,10 @@ async def expire_due_subscriptions(
     expired = [item for item in subscriptions if as_utc(item.expires_at) <= now]
     for subscription in expired:
         if subscription.remnawave_uuid:
-            await gateway.disable_user(subscription.remnawave_uuid)
+            try:
+                await gateway.disable_user(subscription.remnawave_uuid)
+            except RemnawaveNotFoundError:
+                pass
         subscription.status = SubscriptionStatus.expired
         session.add(
             AuditLog(

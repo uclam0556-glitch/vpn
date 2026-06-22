@@ -13,6 +13,10 @@ class RemnawaveError(RuntimeError):
     pass
 
 
+class RemnawaveNotFoundError(RemnawaveError):
+    pass
+
+
 class RemnawaveGateway(Protocol):
     async def create_user(
         self,
@@ -63,6 +67,8 @@ class RemnawaveClient:
             response = await client.request(method, path, **kwargs)
         if response.is_error:
             message = response.text[:500]
+            if response.status_code == 404:
+                raise RemnawaveNotFoundError(f"Remnawave {response.status_code}: {message}")
             raise RemnawaveError(f"Remnawave {response.status_code}: {message}")
         return response.json()
 

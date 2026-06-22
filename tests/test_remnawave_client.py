@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from hamalivpn.config import Settings
-from hamalivpn.remnawave import RemnawaveClient
+from hamalivpn.remnawave import RemnawaveClient, RemnawaveNotFoundError
 
 
 @pytest.mark.asyncio
@@ -94,3 +94,19 @@ async def test_update_user_access_reactivates_existing_user() -> None:
     )
 
     assert result.short_uuid == "renewed-short-token"
+
+
+@pytest.mark.asyncio
+async def test_not_found_has_a_specific_error() -> None:
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"errorCode": "A025", "message": "User not found"})
+
+    settings = Settings(
+        panel_base_url="https://panel.example",
+        remnawave_api_token="api-token",
+        remnawave_mock=False,
+    )
+    client = RemnawaveClient(settings, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(RemnawaveNotFoundError):
+        await client.disable_user("1e74ddcf-80c0-45ce-96ee-0338cab97b75")
