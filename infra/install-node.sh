@@ -139,9 +139,8 @@ info "Директория: ${INSTALL_DIR}"
 
 # ── создаём .env ноды ────────────────────────────────────────────
 cat > "${INSTALL_DIR}/.env" <<NODEENV
-APP_PORT=2095
-REMNAWAVE_PANEL_URL=${PANEL_URL}
-NODE_TOKEN=${NODE_TOKEN}
+NODE_PORT=2095
+SECRET_KEY=${NODE_TOKEN}
 LOG_LEVEL=info
 NODEENV
 chmod 0600 "${INSTALL_DIR}/.env"
@@ -167,7 +166,7 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:${APP_PORT:-2095}/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:${NODE_PORT:-2095}/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
