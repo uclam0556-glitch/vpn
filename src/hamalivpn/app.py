@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import ensure_csrf, verify_credentials, verify_csrf
 from .config import get_settings
 from .db import create_schema, get_session
-from .deeplinks import hiddify_deeplink, happ_deeplink, streisand_deeplink, v2raytun_deeplink
+from .deeplinks import happ_deeplink, hiddify_deeplink, streisand_deeplink, v2raytun_deeplink
 from .models import AuditLog, Customer, Subscription, as_utc
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
