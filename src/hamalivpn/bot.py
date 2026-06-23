@@ -1,11 +1,18 @@
 import asyncio
 import html
 import logging
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .config import get_settings
@@ -27,14 +34,63 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 router = Router()
 
+BANNER = Path(__file__).resolve().parent / "static" / "banner.png"
 
+
+def support_url() -> str:
+    return f"https://t.me/{settings.support_username.lstrip('@')}"
+
+
+# ── тексты ──────────────────────────────────────────────────────────────
+def welcome_text(name: str) -> str:
+    return (
+        "🛡 <b>HamaliVpn</b> — интернет без границ\n\n"
+        f"Привет, {name}! 👋\n"
+        "Здесь ты получаешь доступ, подключаешь приложение и управляешь "
+        "подпиской — без ручной настройки.\n\n"
+        "⚡️ Высокая скорость   🔒 Без логов   🌍 Обходит блокировки\n\n"
+        "Жми «🚀 Подключиться» — выдам доступ за секунды."
+    )
+
+
+def info_text() -> str:
+    return (
+        "ℹ️ <b>О HamaliVpn</b>\n\n"
+        "⚡️ <b>Скорость</b> — серверы с низким пингом, без лагов\n"
+        "🛡 <b>Обход блокировок</b> — работает там, где другие падают\n"
+        "🔄 <b>Авто-переключение</b> между серверами\n"
+        "🔒 <b>Без логов</b> — твой трафик только твой\n"
+        "📱 <b>Все устройства</b> — одна подписка на телефон, ноут, планшет\n\n"
+        f"Поддержка: {support_url()}"
+    )
+
+
+def help_text() -> str:
+    return (
+        "📲 <b>Подключение за минуту</b>\n\n"
+        "1️⃣ Установи приложение:\n"
+        "  🍎 iPhone — <b>Streisand</b> или <b>v2RayTun</b>\n"
+        "  🤖 Android — <b>v2RayTun</b> или <b>Hiddify</b>\n"
+        "  💻 Windows / Mac — <b>Hiddify</b>\n\n"
+        "2️⃣ Открой «👤 Моя подписка» → «📲 Подключить устройство»\n"
+        "3️⃣ Выбери приложение — импорт пройдёт сам\n\n"
+        "Кнопки ниже помогут скачать приложение 👇"
+    )
+
+
+# ── клавиатуры ──────────────────────────────────────────────────────────
 def home_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Подключить HamaliVpn", callback_data="trial:create")
-    builder.button(text="Моя подписка", callback_data="subscription:show")
-    builder.button(text="Проверить и обновить", callback_data="subscription:refresh")
-    builder.button(text="Как подключиться", callback_data="help:connect")
-    builder.adjust(1)
+    builder.row(InlineKeyboardButton(text="🚀 Подключиться", callback_data="trial:create"))
+    builder.row(
+        InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
+        InlineKeyboardButton(text="🔄 Обновить серверы", callback_data="subscription:refresh"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="📲 Инструкция", callback_data="help:connect"),
+        InlineKeyboardButton(text="ℹ️ О сервисе", callback_data="info:show"),
+    )
+    builder.row(InlineKeyboardButton(text="🆘 Поддержка", url=support_url()))
     return builder.as_markup()
 
 
@@ -42,35 +98,54 @@ def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="Подключить устройство",
+            text="📲 Подключить устройство",
             url=f"{settings.public_base_url.rstrip('/')}/connect/{subscription.access_token}",
         )
     )
     builder.row(
-        InlineKeyboardButton(
-            text="Проверить и обновить серверы",
-            callback_data="subscription:refresh",
-        )
+        InlineKeyboardButton(text="🔄 Проверить серверы", callback_data="subscription:refresh"),
+        InlineKeyboardButton(text="🔁 Новая ссылка", callback_data="subscription:rotate"),
     )
     builder.row(
-        InlineKeyboardButton(
-            text="Новая ссылка подключения",
-            callback_data="subscription:rotate",
-        )
+        InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home"),
+        InlineKeyboardButton(text="🆘 Поддержка", url=support_url()),
     )
+    return builder.as_markup()
+
+
+def help_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="Поддержка",
-            url=f"https://t.me/{settings.support_username.lstrip('@')}",
-        )
+            text="🍎 iPhone (Streisand)",
+            url="https://apps.apple.com/app/streisand/id6450534064",
+        ),
+        InlineKeyboardButton(
+            text="🤖 Android (v2RayTun)",
+            url="https://play.google.com/store/apps/details?id=com.v2raytun.android",
+        ),
     )
+    builder.row(
+        InlineKeyboardButton(text="💻 Hiddify (PC)", url="https://hiddify.com/")
+    )
+    builder.row(
+        InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
+        InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home"),
+    )
+    return builder.as_markup()
+
+
+def back_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⬅️ В меню", callback_data="menu:home"))
+    builder.row(InlineKeyboardButton(text="🆘 Поддержка", url=support_url()))
     return builder.as_markup()
 
 
 def health_summary(subscription: Subscription) -> str:
     labels = {
-        "healthy": "готова",
-        "degraded": "работает нестабильно",
+        "healthy": "готова ✅",
+        "degraded": "работает нестабильно ⚠️",
         "empty": "серверы ещё не выданы",
         "unreachable": "временно недоступна",
         "unknown": "ещё не проверена",
@@ -84,16 +159,16 @@ def health_summary(subscription: Subscription) -> str:
     return f"{label}{endpoints}"
 
 
+# ── хендлеры ────────────────────────────────────────────────────────────
 @router.message(CommandStart())
 async def start(message: Message) -> None:
     name = html.escape(message.from_user.first_name if message.from_user else "друг")
-    text = (
-        f"<b>HamaliVpn</b>\n\n"
-        f"{name}, здесь можно получить доступ, подключить приложение и управлять "
-        "подпиской без ручной настройки.\n\n"
-        "На этапе тестирования доступ выдаётся без почасового ограничения."
-    )
-    await message.answer(text, reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
+    if BANNER.exists():
+        try:
+            await message.answer_photo(FSInputFile(BANNER))
+        except Exception:  # noqa: BLE001 — баннер не критичен
+            logger.warning("Не удалось отправить баннер", exc_info=True)
+    await message.answer(welcome_text(name), reply_markup=home_keyboard(), parse_mode=ParseMode.HTML)
 
 
 @router.message(Command("id"))
@@ -105,6 +180,26 @@ async def show_id(message: Message) -> None:
         )
 
 
+@router.callback_query(F.data == "menu:home")
+async def menu_home(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    name = html.escape(callback.from_user.first_name or "друг")
+    await callback.message.edit_text(
+        welcome_text(name), reply_markup=home_keyboard(), parse_mode=ParseMode.HTML
+    )
+
+
+@router.callback_query(F.data == "info:show")
+async def info_show(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.message:
+        await callback.message.edit_text(
+            info_text(), reply_markup=back_keyboard(), parse_mode=ParseMode.HTML
+        )
+
+
 @router.callback_query(F.data == "trial:create")
 async def create_trial(callback: CallbackQuery) -> None:
     await callback.answer()
@@ -112,7 +207,7 @@ async def create_trial(callback: CallbackQuery) -> None:
     if callback.message is None:
         return
 
-    await callback.message.edit_text("Создаю защищённую подписку…")
+    await callback.message.edit_text("⏳ Создаю защищённую подписку…")
     gateway = make_remnawave_gateway(settings)
     try:
         async with SessionFactory() as session:
@@ -135,16 +230,18 @@ async def create_trial(callback: CallbackQuery) -> None:
     except TrialAlreadyUsedError:
         await callback.message.edit_text(
             "Не удалось восстановить старую подписку. Напишите в поддержку.",
-            reply_markup=home_keyboard(),
+            reply_markup=back_keyboard(),
         )
         return
     except CustomerBlockedError:
-        await callback.message.edit_text("Доступ ограничен. Напишите в поддержку.")
+        await callback.message.edit_text(
+            "🚫 Доступ ограничен. Напишите в поддержку.", reply_markup=back_keyboard()
+        )
         return
     except RemnawaveError:
         logger.exception("Could not create Remnawave user")
         await callback.message.edit_text(
-            "Панель временно недоступна. Мы уже видим ошибку — попробуйте немного позже.",
+            "⚠️ Панель временно недоступна. Мы уже видим ошибку — попробуйте немного позже.",
             reply_markup=home_keyboard(),
         )
         return
@@ -156,12 +253,12 @@ async def create_trial(callback: CallbackQuery) -> None:
         "безлимитно" if result.traffic_limit_gb == 0 else f"{result.traffic_limit_gb} ГБ"
     )
     await callback.message.edit_text(
-        "<b>Тестовый доступ активен</b>\n\n"
-        "Срок: без почасового ограничения\n"
-        f"Трафик: {traffic_label}\n"
-        f"Устройства: {result.device_limit}\n"
-        f"Конфигурация: {health_summary(subscription)}\n\n"
-        "Нажмите кнопку — страница определит приложение и предложит импорт.",
+        "✅ <b>Доступ активен!</b>\n\n"
+        "📅 Срок: без ограничения\n"
+        f"📊 Трафик: {traffic_label}\n"
+        f"📱 Устройства: {result.device_limit}\n"
+        f"🔧 Конфигурация: {health_summary(subscription)}\n\n"
+        "Жми «📲 Подключить устройство» — страница сама определит приложение и предложит импорт.",
         reply_markup=subscription_keyboard(subscription),
         parse_mode=ParseMode.HTML,
     )
@@ -183,16 +280,16 @@ async def show_subscription(callback: CallbackQuery) -> None:
             )
     if subscription is None:
         await callback.message.edit_text(
-            "У вас пока нет подписки.",
+            "У вас пока нет подписки.\nЖми «🚀 Подключиться», чтобы получить доступ.",
             reply_markup=home_keyboard(),
         )
         return
     await callback.message.edit_text(
-        "<b>Ваша подписка</b>\n\n"
-        f"Статус: {html.escape(subscription.status.value)}\n"
-        "Срок: без почасового ограничения\n"
-        f"Устройства: {subscription.device_limit}\n"
-        f"Конфигурация: {health_summary(subscription)}",
+        "👤 <b>Ваша подписка</b>\n\n"
+        f"📡 Статус: {html.escape(subscription.status.value)}\n"
+        "📅 Срок: без ограничения\n"
+        f"📱 Устройства: {subscription.device_limit}\n"
+        f"🔧 Конфигурация: {health_summary(subscription)}",
         reply_markup=subscription_keyboard(subscription),
         parse_mode=ParseMode.HTML,
     )
@@ -223,9 +320,9 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
     except (RemnawaveError, SubscriptionNotFoundError):
         logger.exception("Could not refresh subscription")
         await callback.message.edit_text(
-            "Не удалось обновить конфигурацию. Мы сохранили диагностику — "
+            "⚠️ Не удалось обновить конфигурацию. Мы сохранили диагностику — "
             "попробуйте ещё раз через минуту.",
-            reply_markup=home_keyboard(),
+            reply_markup=back_keyboard(),
         )
         return
 
@@ -234,19 +331,19 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
             f"• {html.escape(endpoint.name)}" for endpoint in result.endpoints[:6]
         )
         await callback.message.edit_text(
-            "<b>Конфигурация обновлена</b>\n\n"
-            f"Доступно серверов: {result.endpoint_count}\n"
-            f"Ответ панели: {result.response_ms} мс\n\n"
+            "✅ <b>Конфигурация обновлена</b>\n\n"
+            f"🌍 Доступно серверов: {result.endpoint_count}\n"
+            f"⚡️ Ответ панели: {result.response_ms} мс\n\n"
             f"{endpoint_names}\n\n"
-            "Теперь нажмите «Подключить устройство». Если приложение было открыто, "
-            "обновите подписку внутри него.",
+            "Жми «📲 Подключить устройство». Если приложение было открыто — "
+            "обнови подписку внутри него.",
             reply_markup=subscription_keyboard(subscription),
             parse_mode=ParseMode.HTML,
         )
         return
 
     await callback.message.edit_text(
-        "<b>Серверы пока не готовы</b>\n\n"
+        "⚠️ <b>Серверы пока не готовы</b>\n\n"
         f"{html.escape(result.message)}.\n"
         "Повторите проверку через минуту или откройте поддержку.",
         reply_markup=subscription_keyboard(subscription),
@@ -279,14 +376,14 @@ async def rotate_subscription(callback: CallbackQuery) -> None:
     except (RemnawaveError, SubscriptionNotFoundError):
         logger.exception("Could not rotate subscription link")
         await callback.message.edit_text(
-            "Не удалось выпустить новую ссылку. Попробуйте через минуту.",
-            reply_markup=home_keyboard(),
+            "⚠️ Не удалось выпустить новую ссылку. Попробуйте через минуту.",
+            reply_markup=back_keyboard(),
         )
         return
 
     if not result.is_healthy:
         await callback.message.edit_text(
-            "<b>Новая ссылка создана, но серверы ещё не готовы</b>\n\n"
+            "🔁 <b>Новая ссылка создана, но серверы ещё не готовы</b>\n\n"
             f"{html.escape(result.message)}.",
             reply_markup=subscription_keyboard(subscription),
             parse_mode=ParseMode.HTML,
@@ -294,9 +391,9 @@ async def rotate_subscription(callback: CallbackQuery) -> None:
         return
 
     await callback.message.edit_text(
-        "<b>Новая ссылка готова</b>\n\n"
-        f"Проверено серверов: {result.endpoint_count}.\n"
-        "Старая ссылка отключена. Нажмите «Подключить устройство» и импортируйте "
+        "✅ <b>Новая ссылка готова</b>\n\n"
+        f"🌍 Проверено серверов: {result.endpoint_count}\n"
+        "Старая ссылка отключена. Жми «📲 Подключить устройство» и импортируй "
         "профиль заново — это очищает старый кэш приложения.",
         reply_markup=subscription_keyboard(subscription),
         parse_mode=ParseMode.HTML,
@@ -308,13 +405,7 @@ async def connection_help(callback: CallbackQuery) -> None:
     await callback.answer()
     if callback.message:
         await callback.message.edit_text(
-            "<b>Подключение занимает меньше минуты</b>\n\n"
-            "1. Установите Hiddify или v2rayTun.\n"
-            "2. Откройте «Моя подписка».\n"
-            "3. Нажмите «Подключить устройство».\n"
-            "4. Выберите приложение и подтвердите импорт.",
-            reply_markup=home_keyboard(),
-            parse_mode=ParseMode.HTML,
+            help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML
         )
 
 
