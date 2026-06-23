@@ -24,3 +24,24 @@
         -Server
     }
 }
+
+{$CABINET_HOST} {
+    encode zstd gzip
+
+    handle /api/* {
+        uri strip_prefix /api
+        reverse_proxy remnawave_bot:8080
+    }
+
+    handle {
+        reverse_proxy cabinet_frontend:80
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+}

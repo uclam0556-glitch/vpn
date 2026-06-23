@@ -81,6 +81,7 @@ services:
     environment:
       PUBLIC_HOST: ${PUBLIC_HOST:?Set PUBLIC_HOST}
       PANEL_HOST: ${PANEL_HOST:?Set PANEL_HOST}
+      CABINET_HOST: ${CABINET_HOST:?Set CABINET_HOST}
     ports:
       - "80:80"
       - "443:443"
@@ -91,7 +92,7 @@ services:
     depends_on:
       control:
         condition: service_healthy
-    networks: [backend, remnawave]
+    networks: [backend, remnawave, bedolaga]
 
 volumes:
   postgres_data:
@@ -105,3 +106,6 @@ networks:
   remnawave:
     external: true
     name: remnawave-network
+  bedolaga:
+    external: true
+    name: bedolaga_bot_network
