@@ -84,19 +84,32 @@ async def issue_trial(
         if existing is None or not existing.remnawave_uuid:
             raise TrialAlreadyUsedError
 
-        remote = await gateway.update_user_access(
-            user_uuid=existing.remnawave_uuid,
-            expires_at=expires_at,
-            device_limit=settings.trial_device_limit,
-            traffic_limit_bytes=settings.trial_traffic_gb * 1024**3,
-            squads=settings.squad_uuids,
-        )
+        try:
+            remote = await gateway.update_user_access(
+                user_uuid=existing.remnawave_uuid,
+                expires_at=expires_at,
+                device_limit=settings.trial_device_limit,
+                traffic_limit_bytes=settings.trial_traffic_gb * 1024**3,
+                squads=settings.squad_uuids,
+            )
+        except RemnawaveNotFoundError:
+            # Юзера удалили в Remnawave — пересоздаём, а не падаем с ошибкой.
+            remote = await gateway.create_user(
+                username=_remote_username(telegram_id),
+                telegram_id=telegram_id,
+                expires_at=expires_at,
+                device_limit=settings.trial_device_limit,
+                traffic_limit_bytes=settings.trial_traffic_gb * 1024**3,
+                squads=settings.squad_uuids,
+                description=f"HamaliVpn trial; local_subscription={existing.id}",
+            )
         existing.status = SubscriptionStatus.active
         existing.expires_at = expires_at
         existing.device_limit = settings.trial_device_limit
         existing.traffic_limit_gb = settings.trial_traffic_gb
         existing.subscription_url = remote.subscription_url
         existing.remnawave_short_uuid = remote.short_uuid
+        existing.remnawave_uuid = remote.uuid
         session.add(
             AuditLog(
                 actor=f"telegram:{telegram_id}",
