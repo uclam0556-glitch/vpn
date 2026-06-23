@@ -1,50 +1,226 @@
 {% extends "base.html" %}
-{% block title %}Подключение · HamaliVpn{% endblock %}
+{% block title %}Подключение · HamaliVPN{% endblock %}
 {% block body %}
-<main class="connect-shell">
-  <section class="connect-card">
-    <div class="brand brand-center"><span class="brand-mark">H</span><span>HamaliVpn</span></div>
-    <div class="connection-orb {{ 'orb-off' if expired else '' }}">
-      <span class="orb-ring"></span><span class="orb-core"></span>
+<main class="cv2-shell">
+
+  <!-- HEADER -->
+  <header class="cv2-header">
+    <div class="cv2-logo">
+      <div class="cv2-logo-mark">H</div>
+      <span class="cv2-logo-name">HamaliVPN</span>
     </div>
-    {% if expired %}
-      <div class="eyebrow">Доступ завершён</div>
-      <h1>Подписка истекла</h1>
-      <p class="muted">Откройте Telegram-бот и продлите доступ.</p>
-    {% else %}
-      <div class="eyebrow">
-        {% if health_status == "healthy" %}Проверено · {{ endpoint_count }} сервера
-        {% elif health_status == "degraded" %}Требуется проверка
-        {% else %}Подписка готова{% endif %}
-      </div>
-      <h1>Подключите устройство</h1>
-      <p class="muted">
-        {% if health_status == "healthy" %}
-          Конфигурация проверена сервером. Выберите приложение — профиль импортируется автоматически.
-        {% elif health_message %}
-          {{ health_message }}. Нажмите «Проверить и обновить» в Telegram-боте.
-        {% else %}
-          Выберите приложение — профиль импортируется автоматически.
-        {% endif %}
-      </p>
-      <div class="app-buttons">
-        <a class="app-button primary" href="{{ hiddify_link }}"><span class="app-glyph">H</span><span><b>Открыть в Hiddify</b><small>iOS · Android · Windows · macOS</small></span></a>
-        <a class="app-button" href="{{ v2raytun_link }}"><span class="app-glyph">V</span><span><b>Открыть в v2rayTun</b><small>iOS · Android · Desktop</small></span></a>
-        <a class="app-button" href="{{ happ_link }}"><span class="app-glyph app-glyph-happ">H</span><span><b>Открыть в Happ</b><small>iOS · Android · Windows · macOS · Linux</small></span></a>
-        <a class="app-button" href="{{ streisand_link }}"><span class="app-glyph app-glyph-streisand">S</span><span><b>Открыть в Streisand</b><small>iOS · macOS</small></span></a>
-      </div>
-      <details class="manual">
-        <summary>Подключить вручную</summary>
-        {% if qr %}<img class="qr" src="{{ qr }}" alt="QR-код подписки">{% endif %}
-        <div class="copy-field"><input id="sub-url" readonly value="{{ subscription_url }}"><button data-copy="#sub-url">Копировать</button></div>
-      </details>
+    {% if not expired %}
+    <div class="cv2-status-pill {% if health_status == 'healthy' %}pill-green{% elif health_status == 'degraded' %}pill-yellow{% else %}pill-blue{% endif %}">
+      {% if health_status == "healthy" %}
+        <span class="pill-dot"></span> {{ endpoint_count }} сервера активны
+      {% elif health_status == "degraded" %}
+        <span class="pill-dot"></span> Требует проверки
+      {% else %}
+        <span class="pill-dot"></span> Готово к подключению
+      {% endif %}
+    </div>
     {% endif %}
-    <div class="access-stats">
-      <span><small>Устройства</small><b>{{ subscription.device_limit }}</b></span>
-      <span><small>Трафик</small><b>{{ "Безлимит" if subscription.traffic_limit_gb == 0 else subscription.traffic_limit_gb ~ " ГБ" }}</b></span>
-      <span><small>Срок</small><b>Тестовый доступ</b></span>
+  </header>
+
+  {% if expired %}
+  <!-- EXPIRED STATE -->
+  <div class="cv2-expired">
+    <div class="cv2-expired-icon">🔒</div>
+    <h1>Подписка истекла</h1>
+    <p>Откройте Telegram-бот и продлите доступ, чтобы продолжить пользоваться VPN.</p>
+    <a class="cv2-btn-primary" href="https://t.me/{{ support_username.lstrip('@') }}">
+      Открыть поддержку
+    </a>
+  </div>
+
+  {% else %}
+  <!-- HERO -->
+  <div class="cv2-hero">
+    <h1 class="cv2-title">Подключите <span class="cv2-title-accent">устройство</span></h1>
+    <p class="cv2-subtitle">Два шага — и вы в свободном интернете</p>
+  </div>
+
+  <!-- STEPS -->
+  <div class="cv2-steps">
+
+    <!-- STEP 1: Install App -->
+    <div class="cv2-step">
+      <div class="cv2-step-header">
+        <div class="cv2-step-num">1</div>
+        <div class="cv2-step-meta">
+          <h2 class="cv2-step-title">Установите приложение</h2>
+          <p class="cv2-step-desc">Выберите под ваше устройство</p>
+        </div>
+      </div>
+
+      <div class="cv2-apps">
+
+        <a class="cv2-app" href="https://apps.apple.com/app/streisand/id6450534064" target="_blank">
+          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #ff6b35, #f7931e);">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+          </div>
+          <div class="cv2-app-info">
+            <b>Streisand</b>
+            <small>iOS · macOS</small>
+          </div>
+          <div class="cv2-app-badge">Топ выбор</div>
+          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-app" href="https://apps.apple.com/app/v2raytun/id6476628951" target="_blank">
+          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
+          </div>
+          <div class="cv2-app-info">
+            <b>v2RayTun</b>
+            <small>iOS · Android · Desktop</small>
+          </div>
+          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-app" href="https://play.google.com/store/apps/details?id=com.v2raytun.android" target="_blank">
+          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #22c55e, #16a34a);">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M17.523 15.341L7.21 21.065a1 1 0 0 1-1.489-.87V3.805a1 1 0 0 1 1.489-.87l10.313 5.724a1 1 0 0 1 0 1.74l-10.313 5.724"/></svg>
+          </div>
+          <div class="cv2-app-info">
+            <b>v2RayTun</b>
+            <small>Android</small>
+          </div>
+          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-app" href="https://hiddify.com/download" target="_blank">
+          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #0ea5e9, #0284c7);">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
+          </div>
+          <div class="cv2-app-info">
+            <b>Hiddify</b>
+            <small>Windows · macOS · Linux · Android</small>
+          </div>
+          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-app" href="{{ happ_link }}" target="_blank">
+          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="cv2-app-info">
+            <b>Happ</b>
+            <small>iOS · Android · Windows · macOS · Linux</small>
+          </div>
+          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+      </div>
     </div>
-    <a class="support-link" href="https://t.me/{{ support_username.lstrip('@') }}">Нужна помощь? Открыть поддержку</a>
-  </section>
+
+    <!-- DIVIDER -->
+    <div class="cv2-step-divider">
+      <div class="cv2-divider-line"></div>
+      <div class="cv2-divider-dot"></div>
+      <div class="cv2-divider-line"></div>
+    </div>
+
+    <!-- STEP 2: Connect subscription -->
+    <div class="cv2-step">
+      <div class="cv2-step-header">
+        <div class="cv2-step-num">2</div>
+        <div class="cv2-step-meta">
+          <h2 class="cv2-step-title">Подключите подписку</h2>
+          <p class="cv2-step-desc">Нажмите кнопку — приложение откроется и всё настроит само</p>
+        </div>
+      </div>
+
+      <div class="cv2-connect-buttons">
+        <a class="cv2-connect-btn" href="{{ hiddify_link }}">
+          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #0ea5e9, #0284c7);">H</div>
+          <div class="cv2-connect-info">
+            <b>Импорт в Hiddify</b>
+            <small>iOS · Android · Windows · macOS</small>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-connect-btn" href="{{ v2raytun_link }}">
+          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">V</div>
+          <div class="cv2-connect-info">
+            <b>Импорт в v2RayTun</b>
+            <small>iOS · Android · Desktop</small>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-connect-btn" href="{{ happ_link }}">
+          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">H</div>
+          <div class="cv2-connect-info">
+            <b>Импорт в Happ</b>
+            <small>iOS · Android · Windows · macOS · Linux</small>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+
+        <a class="cv2-connect-btn" href="{{ streisand_link }}">
+          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #ff6b35, #f7931e);">S</div>
+          <div class="cv2-connect-info">
+            <b>Импорт в Streisand</b>
+            <small>iOS · macOS</small>
+          </div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
+        </a>
+      </div>
+
+      <!-- MANUAL -->
+      <details class="cv2-manual">
+        <summary class="cv2-manual-toggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          Подключить вручную (скопировать ссылку)
+        </summary>
+        <div class="cv2-manual-body">
+          {% if qr %}
+          <div class="cv2-qr-wrap">
+            <img class="cv2-qr" src="{{ qr }}" alt="QR-код подписки">
+            <p class="cv2-qr-hint">Отсканируйте QR-код в приложении</p>
+          </div>
+          {% endif %}
+          <div class="cv2-copy-row">
+            <input id="sub-url" class="cv2-copy-input" readonly value="{{ subscription_url }}">
+            <button class="cv2-copy-btn" data-copy="#sub-url">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+              Копировать
+            </button>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- SUBSCRIPTION INFO BAR -->
+  <div class="cv2-info-bar">
+    <div class="cv2-info-item">
+      <span class="cv2-info-label">Устройств</span>
+      <span class="cv2-info-value">{{ subscription.device_limit }}</span>
+    </div>
+    <div class="cv2-info-sep"></div>
+    <div class="cv2-info-item">
+      <span class="cv2-info-label">Трафик</span>
+      <span class="cv2-info-value">{{ "∞" if subscription.traffic_limit_gb == 0 else subscription.traffic_limit_gb ~ " ГБ" }}</span>
+    </div>
+    <div class="cv2-info-sep"></div>
+    <div class="cv2-info-item">
+      <span class="cv2-info-label">Серверов</span>
+      <span class="cv2-info-value">{{ endpoint_count if endpoint_count else "—" }}</span>
+    </div>
+  </div>
+
+  {% endif %}
+
+  <!-- FOOTER -->
+  <footer class="cv2-footer">
+    <a class="cv2-support" href="https://t.me/{{ support_username.lstrip('@') }}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+      Нужна помощь? Написать в поддержку
+    </a>
+  </footer>
+
 </main>
 {% endblock %}
