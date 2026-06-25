@@ -62,7 +62,10 @@ const SUB_STATUS = {
   pending: ["Создаётся", "pending"], none: ["Нет ключа", "disabled"], inactive: ["Неактивен", "disabled"],
 };
 const TX_RU = { topup: "Пополнение", purchase: "Покупка", refund: "Возврат", bonus: "Бонус", penalty: "Штраф" };
-const LEVEL_RU = { start: "Start", partner: "Partner", vip: "VIP", "": "" };
+const LEVEL_RU = {
+  1: "Start", 2: "Partner", 3: "VIP",
+  start: "Start", partner: "Partner", vip: "VIP", "": "",
+};
 
 async function copy(text, label = "Скопировано") {
   try { await navigator.clipboard.writeText(text); toast(label, "ok"); }
@@ -311,12 +314,49 @@ function showClientModal(c) {
 async function viewResellers(view) {
   const list = await api("/admin/resellers");
   view.innerHTML = `
-    <div class="section-title"><h2>Реселлеры</h2></div>
-    <p class="muted" style="margin:0 2px 14px;font-size:13px">
-      Новый реселлер назначается ролью в боте/БД. Здесь — баланс, пополнение и ключ доступа.</p>
+    <div class="section-title"><h2>Реселлеры</h2>
+      <button class="btn btn--primary btn--sm" data-action="add-reseller">+ Создать</button></div>
     <div class="rows">
       ${list.length ? list.map(resellerRow).join("") : `<div class="empty">Реселлеров нет</div>`}
     </div>`;
+}
+
+function openCreateResellerModal() {
+  modal(`
+    <h3>Новый реселлер</h3>
+    <div class="field"><label>Имя / название *</label><input class="input" id="rName" placeholder="напр. Магомед" /></div>
+    <div class="field"><label>Telegram ID (необязательно)</label>
+      <input class="input" id="rTg" type="number" placeholder="если знаете — привяжем" /></div>
+    <div class="field"><label>Уровень</label>
+      <select class="select" id="rLevel">
+        <option value="1">Start</option><option value="2">Partner</option><option value="3">VIP</option>
+      </select></div>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" data-action="close">Отмена</button>
+      <button class="btn btn--primary" id="rSave">Создать</button>
+    </div>`);
+  document.getElementById("rSave").addEventListener("click", async () => {
+    const name = document.getElementById("rName").value.trim();
+    if (!name) return toast("Укажите имя", "err");
+    const tg = document.getElementById("rTg").value.trim();
+    try {
+      const r = await api("/admin/resellers", { method: "POST", body: {
+        name,
+        telegram_id: tg ? Number(tg) : null,
+        level: Number(document.getElementById("rLevel").value) || 1,
+      }});
+      toast("Реселлер создан", "ok");
+      renderTab();
+      modal(`
+        <h3>Реселлер создан</h3>
+        <p class="sub">${esc(r.name)} — ключ доступа (передайте реселлеру, показывается один раз):</p>
+        <div class="codebox">${esc(r.portal_access_key)}</div>
+        <div class="modal__actions">
+          <button class="btn btn--primary" data-copy="${esc(r.portal_access_key)}">Скопировать ключ</button>
+          <button class="btn btn--ghost" data-action="close">Готово</button>
+        </div>`);
+    } catch (err) { toast(err.message, "err"); }
+  });
 }
 function resellerRow(r) {
   return `<div class="row">
