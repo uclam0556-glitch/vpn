@@ -6,7 +6,7 @@ from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -15,10 +15,12 @@ from aiogram.types import (
     Message,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from sqlalchemy import select
 
+from . import payments, referrals
 from .config import get_settings
 from .db import SessionFactory, create_schema
-from .models import Subscription, SubscriptionStatus
+from .models import Customer, Subscription, SubscriptionStatus, as_utc
 from .remnawave import RemnawaveError, make_remnawave_gateway
 from .services import (
     CustomerBlockedError,
@@ -34,11 +36,18 @@ from .services import (
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = Router()
+router.include_router(payments.router)
+router.include_router(referrals.router)
 
 BANNER = Path(__file__).resolve().parent / "static" / "banner.png"
 
-DIVIDER = "▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸ ▸"
-
+# Premium Emojis tags (fallback to unicode since custom emojis require specific valid document IDs)
+EMOJI_SHIELD = '🛡'
+EMOJI_LIGHTNING = '⚡️'
+EMOJI_STAR = '⭐️'
+EMOJI_DIAMOND = '💎'
+EMOJI_ROCKET = '🚀'
+EMOJI_GIFT = '🎁'
 
 def support_url() -> str:
     return f"https://t.me/{settings.support_username.lstrip('@')}"
@@ -49,11 +58,11 @@ def support_url() -> str:
 def welcome_text(name: str) -> str:
     return (
         f"👋 Привет, <b>{name}</b>!\n\n"
-        "<b>HamaliVPN</b> — твой личный ключ к свободному интернету.\n\n"
-        "⚡️ Молниеносная скорость\n"
-        "🔒 Полная анонимность\n"
-        "🌍 Все страны и платформы\n"
-        "📱 До 5 устройств одновременно\n\n"
+        f"<b>HamaliVPN</b> — твой личный ключ к свободному интернету.\n\n"
+        f"{EMOJI_LIGHTNING} Молниеносная скорость\n"
+        f"{EMOJI_SHIELD} Полная анонимность\n"
+        f"{EMOJI_STAR} Все страны и платформы\n"
+        f"{EMOJI_DIAMOND} До 5 устройств одновременно\n\n"
         "Нажми кнопку ниже, чтобы получить доступ за 10 секунд 👇"
     )
 
@@ -68,7 +77,7 @@ def subscription_text(subscription: Subscription, health: str) -> str:
 
     expires = "∞ Бессрочно"
     if subscription.expires_at:
-        delta = subscription.expires_at - datetime.now(UTC)
+        delta = as_utc(subscription.expires_at) - datetime.now(UTC)
         days = delta.days
         if days < 0:
             expires = "🔴 Истекла"
@@ -158,14 +167,17 @@ def home_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🚀 Получить доступ", callback_data="trial:create")
     )
     builder.row(
+        InlineKeyboardButton(text="💎 Купить подписку", callback_data="menu:buy"),
+        InlineKeyboardButton(text="🎁 Мои бонусы", callback_data="menu:referrals"),
+    )
+    builder.row(
         InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
         InlineKeyboardButton(text="🌐 Серверы", callback_data="subscription:refresh"),
     )
     builder.row(
         InlineKeyboardButton(text="📲 Инструкция", callback_data="help:connect"),
-        InlineKeyboardButton(text="💎 О сервисе", callback_data="info:show"),
+        InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
     )
-    builder.row(InlineKeyboardButton(text="💬 Поддержка", url=support_url()))
     return builder.as_markup()
 
 
@@ -236,9 +248,45 @@ def health_summary(subscription: Subscription) -> str:
 
 # ── хендлеры ───────────────────────────────────────────────────────────────
 
+
 @router.message(CommandStart())
-async def start(message: Message) -> None:
+async def start(message: Message, command: CommandObject) -> None:
     name = html.escape(message.from_user.first_name if message.from_user else "друг")
+
+    # Process referral
+    referrer_id = None
+    args = command.args
+    if args and args.startswith("ref_"):
+        try:
+            referrer_id = int(args.split("_")[1])
+        except ValueError:
+            pass
+
+    # Link referral if user is new
+    if referrer_id and message.from_user:
+        async with SessionFactory() as session:
+            stmt = select(Customer).where(Customer.telegram_id == message.from_user.id)
+            existing = await session.scalar(stmt)
+            if not existing and referrer_id != message.from_user.id:
+                # Save mapping to memory/temp or create partial Customer here
+                # Our issue_trial function automatically creates the Customer
+                # For a full implementation, we'd need to create the Customer row now
+                # Since issue_trial handles it, we can create the customer right here.
+                new_customer = Customer(
+                    telegram_id=message.from_user.id,
+                    telegram_username=message.from_user.username,
+                    full_name=message.from_user.full_name or "",
+                    referrer_id=None # We need the local DB ID of the referrer, not telegram_id
+                )
+
+                # Resolve referrer DB ID
+                ref_stmt = select(Customer).where(Customer.telegram_id == referrer_id)
+                ref_customer = await session.scalar(ref_stmt)
+                if ref_customer:
+                    new_customer.referrer_id = ref_customer.id
+                    session.add(new_customer)
+                    await session.commit()
+
     text = welcome_text(name)
     kb = home_keyboard()
     if BANNER.exists():
@@ -436,7 +484,9 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
                         caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
                     )
                 else:
-                    await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                    await callback.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.HTML
+                    )
                 return
             result = await refresh_subscription_access(
                 session,
@@ -505,7 +555,9 @@ async def rotate_subscription(callback: CallbackQuery) -> None:
                         caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
                     )
                 else:
-                    await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+                    await callback.message.edit_text(
+                        text, reply_markup=kb, parse_mode=ParseMode.HTML
+                    )
                 return
             result = await rotate_subscription_link(
                 session,

@@ -44,6 +44,8 @@ class Customer(Base):
     full_name: Mapped[str] = mapped_column(String(160), default="")
     trial_used: Mapped[bool] = mapped_column(Boolean, default=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
+    referrer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
+    balance_rub: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -51,6 +53,12 @@ class Customer(Base):
 
     subscriptions: Mapped[list["Subscription"]] = relationship(
         back_populates="customer", cascade="all, delete-orphan"
+    )
+    referrer: Mapped["Customer"] = relationship(
+        "Customer", remote_side="Customer.id", back_populates="referrals"
+    )
+    referrals: Mapped[list["Customer"]] = relationship(
+        "Customer", back_populates="referrer"
     )
 
 
@@ -100,3 +108,51 @@ class AuditLog(Base):
     entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class PaymentStatus(StrEnum):
+    pending = "pending"
+    paid = "paid"
+    cancelled = "cancelled"
+    expired = "expired"
+
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    amount: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(10), default="RUB")
+    provider: Mapped[str] = mapped_column(String(32))  # e.g., cryptomus, yookassa, manual
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    status: Mapped[PaymentStatus] = mapped_column(
+        Enum(PaymentStatus, native_enum=False), default=PaymentStatus.pending
+    )
+    payload: Mapped[str | None] = mapped_column(String(255), nullable=True)  # e.g., plan code
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+
+class WithdrawalStatus(StrEnum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+
+class WithdrawalRequest(Base):
+    __tablename__ = "withdrawal_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    amount: Mapped[int] = mapped_column(Integer)
+    requisites: Mapped[str] = mapped_column(Text)
+    status: Mapped[WithdrawalStatus] = mapped_column(
+        Enum(WithdrawalStatus, native_enum=False), default=WithdrawalStatus.pending
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )

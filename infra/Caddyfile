@@ -25,17 +25,9 @@
     }
 }
 
-{$CABINET_HOST} {
+{$CABINET_HOST}, {$CABINET_FALLBACK_HOST} {
     encode zstd gzip
-
-    handle /api/* {
-        uri strip_prefix /api
-        reverse_proxy remnawave_bot:8080
-    }
-
-    handle {
-        reverse_proxy cabinet_frontend:80
-    }
+    reverse_proxy control:8080
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"

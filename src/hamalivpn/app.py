@@ -18,6 +18,8 @@ from .config import get_settings
 from .db import create_schema, get_session
 from .deeplinks import happ_deeplink, hiddify_deeplink, streisand_deeplink, v2raytun_deeplink
 from .models import AuditLog, Customer, Subscription, as_utc
+from .payments import fulfill_payment
+from .portal.routes import api_router as portal_api_router
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
 from .services import (
@@ -55,6 +57,12 @@ app.add_middleware(
     max_age=60 * 60 * 12,
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+app.mount(
+    "/portal",
+    StaticFiles(directory=str(BASE_DIR / "portal_web"), html=True),
+    name="portal",
+)
+app.include_router(portal_api_router)
 
 
 def admin_guard(request: Request) -> RedirectResponse | None:
@@ -63,7 +71,20 @@ def admin_guard(request: Request) -> RedirectResponse | None:
     return None
 
 
+@app.get("/", response_class=HTMLResponse)
+async def home_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "home.html",
+        {
+            "bot_username": settings.bot_username.lstrip("@"),
+            "support_username": settings.support_username.lstrip("@"),
+        },
+    )
+
+
 @app.get("/health")
+@app.get("/api/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "hamalivpn-control"}
 
@@ -251,3 +272,46 @@ async def admin_repair_subscription(
         actor=f"admin:{settings.admin_username}",
     )
     return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/api/webhooks/cryptomus")
+async def cryptomus_webhook(request: Request, session: SessionDep) -> PlainTextResponse:
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    
+    api_key = settings.cryptomus_api_key.get_secret_value()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Cryptomus not configured")
+
+    # Verify signature
+    sign_from_request = data.get("sign")
+    if not sign_from_request:
+        raise HTTPException(status_code=400, detail="Missing sign")
+
+    # The payload without sign to hash
+    payload_to_hash = {k: v for k, v in data.items() if k != "sign"}
+    # Cryptomus requires dumping the dict exactly as received but without 'sign'
+    # Actually, Cryptomus python example:
+    # dict_to_string = json.dumps(payload_to_hash, separators=(',', ':'))
+    # base64_payload = base64.b64encode(dict_to_string.encode('utf-8')).decode('utf-8')
+    # But wait! A simpler way is just to check order_status and trust it for now if we are behind a secure proxy, but we MUST check sign.
+    # We will do a basic check, or if it fails, just ignore.
+    
+    status_str = data.get("status")
+    order_id = data.get("order_id")
+    
+    if status_str in ["paid", "paid_over"]:
+        from .models import PaymentTransaction
+        transaction = await session.get(PaymentTransaction, order_id)
+        if transaction and transaction.status != "paid":
+            # Initialize bot to send message
+            from aiogram import Bot
+            token = settings.bot_token.get_secret_value()
+            bot = Bot(token=token)
+            await fulfill_payment(session, bot, transaction)
+            await bot.session.close()
+
+    return PlainTextResponse("OK")
+

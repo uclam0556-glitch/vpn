@@ -4,6 +4,11 @@
 !*.env.example
 bot/.env
 
+# Локальные файлы с хардкодом секретов (пароль Hysteria, пины) — НЕ в публичный репо
+sub_injector_new.py
+install_hysteria.sh
+Caddyfile_remote
+
 # OS / редакторы
 .DS_Store
 Thumbs.db

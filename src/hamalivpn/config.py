@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     remnawave_mock: bool = True
     remnawave_internal_squads: str = ""
 
+    # Payment Settings
+    cryptomus_merchant_id: str = ""
+    cryptomus_api_key: SecretStr = SecretStr("")
+    manual_sbp_card: str = ""
+    manual_sbp_bank: str = ""
+
     # Remnawave requires expireAt, so "unlimited during testing" is represented
     # by a long-lived access period. Reissuing access extends the same user.
     test_access_days: int = 3650

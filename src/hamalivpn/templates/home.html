@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}HamaliVpn{% endblock %}
+{% block body %}
+<main class="connect-shell">
+  <section class="connect-card">
+    <div class="connection-orb" aria-hidden="true">
+      <div class="orb-ring"></div>
+      <div class="orb-core"></div>
+    </div>
+    <p class="eyebrow">HamaliVpn Access</p>
+    <h1>Защищённое подключение готово</h1>
+    <p class="muted">
+      Откройте Telegram-бота, получите тестовый доступ и подключите устройство через Happ,
+      v2RayTun, Hiddify или Streisand.
+    </p>
+    <div class="app-buttons">
+      <a class="app-button primary" href="https://t.me/{{ bot_username }}">
+        <span class="app-glyph">H</span>
+        <span>
+          <b>Открыть HamaliVpn в Telegram</b>
+          <small>Выдача доступа, инструкции и управление подпиской</small>
+        </span>
+      </a>
+      <a class="app-button" href="/admin/login">
+        <span class="app-glyph app-glyph-happ">A</span>
+        <span>
+          <b>Войти в админ-панель</b>
+          <small>Пользователи, подписки и ручное управление</small>
+        </span>
+      </a>
+    </div>
+    <a class="support-link" href="https://t.me/{{ support_username }}">Поддержка HamaliVpn</a>
+  </section>
+</main>
+{% endblock %}
