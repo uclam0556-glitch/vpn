@@ -661,11 +661,13 @@ async def admin_disable_key(uuid: str, user: dict = Depends(get_portal_user), db
 
 
 # ── FreeKassa: приём оплаты и автоматическая выдача подписки ──────────────────
-FK_PLAN_DAYS = {"1_month": 30, "3_months": 90, "6_months": 180}
-FK_PLAN_NAMES = {"1_month": "1 Месяц", "3_months": "3 Месяца", "6_months": "6 Месяцев"}
+FK_PLAN_DAYS = {"1_month": 30, "2_months": 60, "3_months": 90, "6_months": 180}
+FK_PLAN_DEVICES = {"1_month": 1, "2_months": 3, "3_months": 5, "6_months": 5}
+FK_PLAN_NAMES = {"1_month": "1 месяц", "2_months": "2 месяца", "3_months": "3 месяца", "6_months": "6 месяцев"}
+FK_REFERRAL_RATE = 0.30
 
 
-async def _fk_notify(telegram_id: int, plan_code: str, days: int) -> None:
+async def _tg_send(telegram_id: int, text: str) -> None:
     token = os.getenv("BOT_TOKEN", "")
     if not token:
         return
@@ -673,16 +675,19 @@ async def _fk_notify(telegram_id: int, plan_code: str, days: int) -> None:
         from aiogram import Bot
         bot = Bot(token=token)
         try:
-            await bot.send_message(
-                telegram_id,
-                f"✅ <b>Оплата получена!</b>\nТариф «{FK_PLAN_NAMES.get(plan_code, plan_code)}» "
-                f"активирован на {days} дн. Откройте «Моя подписка» в боте.",
-                parse_mode="HTML",
-            )
+            await bot.send_message(telegram_id, text, parse_mode="HTML")
         finally:
             await bot.session.close()
     except Exception:
         pass
+
+
+async def _fk_notify(telegram_id: int, plan_code: str, days: int) -> None:
+    await _tg_send(
+        telegram_id,
+        f"✅ <b>Оплата получена!</b>\nТариф «{FK_PLAN_NAMES.get(plan_code, plan_code)}» "
+        f"активирован на {days} дн. Откройте «Моя подписка» в боте.",
+    )
 
 
 async def _fk_fulfill(order_id: str) -> None:
@@ -701,10 +706,14 @@ async def _fk_fulfill(order_id: str) -> None:
         if not customer:
             return
         days = FK_PLAN_DAYS.get(tx.payload or "", 30)
+        devices = FK_PLAN_DEVICES.get(tx.payload or "", 1)
+        ref_tg, ref_bonus = None, 0
         if customer.referrer_id:
             ref = await db.get(Customer, customer.referrer_id)
             if ref:
-                ref.balance_rub += int(tx.amount * 0.1)
+                ref_bonus = int(tx.amount * FK_REFERRAL_RATE)
+                ref.balance_rub += ref_bonus
+                ref_tg = ref.telegram_id
         sub = await get_latest_subscription(db, customer.telegram_id)
         provisioned = False
         if not sub:
@@ -726,6 +735,7 @@ async def _fk_fulfill(order_id: str) -> None:
             new_exp = base + timedelta(days=days)
             sub.expires_at = new_exp
             sub.status = SubscriptionStatus.active
+            sub.device_limit = devices
             await db.commit()
             if sub.remnawave_uuid:
                 try:
@@ -741,6 +751,12 @@ async def _fk_fulfill(order_id: str) -> None:
                 except Exception:
                     pass
         await _fk_notify(customer.telegram_id, tx.payload or "", days)
+        if ref_tg and ref_bonus:
+            await _tg_send(
+                ref_tg,
+                f"🎁 Ваш реферал оплатил подписку!\nНачислено <b>{ref_bonus} ₽</b> "
+                "на партнёрский баланс.",
+            )
 
 
 @app.get("/api/webhooks/freekassa")

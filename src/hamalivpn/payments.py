@@ -34,10 +34,13 @@ settings = get_settings()
 router = Router()
 
 PLANS = {
-    "1_month": {"name": "1 Месяц", "price": 100, "days": 30},
-    "3_months": {"name": "3 Месяца", "price": 250, "days": 90},
-    "6_months": {"name": "6 Месяцев", "price": 450, "days": 180},
+    "1_month": {"name": "1 месяц · 1 устройство", "price": 150, "days": 30, "devices": 1},
+    "2_months": {"name": "2 месяца · 3 устройства", "price": 300, "days": 60, "devices": 3},
+    "3_months": {"name": "3 месяца · 5 устройств", "price": 450, "days": 90, "devices": 5},
+    "6_months": {"name": "6 месяцев · 5 устройств", "price": 700, "days": 180, "devices": 5},
 }
+
+REFERRAL_RATE = 0.30  # доля пополнения, начисляемая пригласившему
 
 
 def buy_keyboard() -> InlineKeyboardMarkup:
@@ -184,13 +187,13 @@ async def successful_payment(message: Message) -> None:
         if customer and customer.referrer_id:
             referrer = await session.get(Customer, customer.referrer_id)
             if referrer:
-                bonus = int(plan["price"] * 0.1)
+                bonus = int(plan["price"] * REFERRAL_RATE)
                 referrer.balance_rub += bonus
                 try:
                     await message.bot.send_message(
                         referrer.telegram_id,
-                        f"🎁 Ваш реферал только что оплатил подписку!\n"
-                        f"Вам начислено <b>{bonus} ⭐️</b> на внутренний баланс.",
+                        f"🎁 Ваш реферал оплатил подписку!\n"
+                        f"Начислено <b>{bonus} ₽</b> на партнёрский баланс.",
                         parse_mode="HTML"
                     )
                 except Exception:
@@ -232,6 +235,7 @@ async def successful_payment(message: Message) -> None:
 
             subscription.expires_at = new_expires
             subscription.status = SubscriptionStatus.active
+            subscription.device_limit = plan.get("devices", subscription.device_limit)
             await session.commit()
 
             # Extend in Remnawave

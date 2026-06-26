@@ -49,6 +49,8 @@ class Customer(Base):
     role: Mapped[str] = mapped_column(String(32), default="client", server_default="client")
     reseller_level: Mapped[int] = mapped_column(default=1, server_default="1")
     portal_access_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    withdrawal_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    withdrawal_requisites: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
