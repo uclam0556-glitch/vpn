@@ -13,6 +13,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
@@ -57,13 +58,13 @@ def support_url() -> str:
 
 def welcome_text(name: str) -> str:
     return (
-        f"👋 Привет, <b>{name}</b>!\n\n"
-        f"<b>HamaliVPN</b> — твой личный ключ к свободному интернету.\n\n"
-        f"{EMOJI_LIGHTNING} Молниеносная скорость\n"
-        f"{EMOJI_SHIELD} Полная анонимность\n"
-        f"{EMOJI_STAR} Все страны и платформы\n"
-        f"{EMOJI_DIAMOND} До 5 устройств одновременно\n\n"
-        "Нажми кнопку ниже, чтобы получить доступ за 10 секунд 👇"
+        f"👋 <b>{name}</b>, добро пожаловать в <b>HamaliVPN</b>\n\n"
+        "Премиальный VPN для свободного интернета — быстрый, приватный, стабильный.\n\n"
+        "⚡️  Скорость без ограничений\n"
+        "🛡  Шифрование и полная приватность\n"
+        "🌍  Серверы Европы — открыт весь мир\n"
+        "📱  До 5 устройств на одной подписке\n\n"
+        "Начните с пробного доступа или оформите подписку 👇"
     )
 
 
@@ -88,26 +89,21 @@ def subscription_text(subscription: Subscription, health: str) -> str:
 
     return (
         "👤 <b>Моя подписка</b>\n\n"
-        f"Статус:    {status}\n"
-        f"Срок:      {expires}\n"
-        f"Трафик:    {health}\n"
-        f"Устройств: {subscription.device_limit} шт.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Нажми «Подключить устройство» — \n"
-        "приложение настроится автоматически 🚀"
+        f"Статус — {status}\n"
+        f"Действует — {expires}\n"
+        f"Серверы — {health}\n"
+        f"Устройств — {subscription.device_limit}\n\n"
+        "Нажмите «Подключить устройство» — приложение настроится автоматически."
     )
 
 
 def trial_success_text(traffic_label: str, device_limit: int, health: str) -> str:
     return (
-        "✅ <b>Доступ активирован!</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 Трафик:    {traffic_label}\n"
-        f"📱 Устройств: {device_limit} шт.\n"
-        f"🔧 Серверы:   {health}\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Жми <b>«📲 Подключить устройство»</b> — \n"
-        "всё настроится за один клик."
+        "✅ <b>Доступ активирован</b>\n\n"
+        f"Трафик — {traffic_label}\n"
+        f"Устройств — {device_limit}\n"
+        f"Серверы — {health}\n\n"
+        "Нажмите <b>«📲 Подключить устройство»</b> — настройка пройдёт автоматически."
     )
 
 
@@ -131,31 +127,24 @@ def info_text() -> str:
 
 def help_text() -> str:
     return (
-        "📲 <b>Подключение за 1 минуту</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "<b>Шаг 1.</b> Установи приложение:\n"
-        "   🍎 <b>iPhone</b> → Streisand или v2RayTun\n"
-        "   🤖 <b>Android</b> → v2RayTun или Hiddify\n"
-        "   💻 <b>PC / Mac</b> → Hiddify\n\n"
-        "<b>Шаг 2.</b> Открой «👤 Моя подписка»\n"
-        "         и нажми «📲 Подключить устройство»\n\n"
-        "<b>Шаг 3.</b> Выбери своё приложение —\n"
-        "         конфигурация добавится сама ✅\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Кнопки для скачивания приложений 👇"
+        "📘 <b>Как подключиться</b>\n\n"
+        "<b>1.</b> Установите приложение:\n"
+        "   • iPhone — Streisand\n"
+        "   • Android — v2RayTun\n"
+        "   • Windows / macOS — Hiddify\n\n"
+        "<b>2.</b> Откройте «Моя подписка» → «Подключить устройство».\n\n"
+        "<b>3.</b> Выберите приложение — профиль добавится автоматически.\n\n"
+        "Скачать приложения 👇"
     )
 
 
 def refresh_success_text(endpoint_count: int, response_ms: int, endpoint_names: str) -> str:
     return (
-        "🔄 <b>Серверы обновлены!</b>\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌍 Серверов: {endpoint_count}\n"
-        f"⚡️ Пинг панели: {response_ms} мс\n\n"
-        f"{endpoint_names}\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Если приложение уже открыто — \n"
-        "обнови подписку внутри него."
+        "🔄 <b>Серверы обновлены</b>\n\n"
+        f"Доступно серверов — {endpoint_count}\n"
+        f"Отклик панели — {response_ms} мс\n\n"
+        f"{endpoint_names}\n\n"
+        "Если приложение открыто — обновите подписку внутри него."
     )
 
 
@@ -164,18 +153,21 @@ def refresh_success_text(endpoint_count: int, response_ms: int, endpoint_names: 
 def home_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="🚀 Получить доступ", callback_data="trial:create")
+        InlineKeyboardButton(
+            text="📱 Личный кабинет",
+            web_app=WebAppInfo(url="https://app.hamali.ru/?v=9"),
+        )
     )
     builder.row(
-        InlineKeyboardButton(text="💎 Купить подписку", callback_data="menu:buy"),
-        InlineKeyboardButton(text="🎁 Мои бонусы", callback_data="menu:referrals"),
+        InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="trial:create"),
+        InlineKeyboardButton(text="💳 Купить", callback_data="menu:buy"),
     )
     builder.row(
         InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
-        InlineKeyboardButton(text="🌐 Серверы", callback_data="subscription:refresh"),
+        InlineKeyboardButton(text="⭐️ Бонусы", callback_data="menu:referrals"),
     )
     builder.row(
-        InlineKeyboardButton(text="📲 Инструкция", callback_data="help:connect"),
+        InlineKeyboardButton(text="📘 Инструкция", callback_data="help:connect"),
         InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
     )
     return builder.as_markup()
@@ -379,8 +371,8 @@ async def create_trial(callback: CallbackQuery) -> None:
     except TrialAlreadyUsedError:
         text = (
             "⚠️ <b>Пробный период уже использован</b>\n\n"
-            "Открой «👤 Моя подписка», чтобы управлять текущим доступом.\n"
-            "Если нужна помощь — напиши в поддержку."
+            "Откройте «👤 Моя подписка», чтобы управлять доступом, "
+            "или оформите подписку кнопкой «💳 Купить»."
         )
         kb = back_keyboard()
         if callback.message.photo:
@@ -446,7 +438,8 @@ async def show_subscription(callback: CallbackQuery) -> None:
     if subscription is None:
         text = (
             "👤 <b>Подписка не найдена</b>\n\n"
-            "Нажми «🚀 Получить доступ», чтобы активировать пробный период."
+            "Нажмите «🎁 Пробный доступ», чтобы активировать тест, "
+            "или «💳 Купить» для полной подписки."
         )
         kb = home_keyboard()
         if callback.message.photo:

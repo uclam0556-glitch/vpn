@@ -18,10 +18,9 @@ from .config import get_settings
 from .db import create_schema, get_session
 from .deeplinks import happ_deeplink, hiddify_deeplink, streisand_deeplink, v2raytun_deeplink
 from .models import AuditLog, Customer, Subscription, as_utc
-from .payments import fulfill_payment
-from .portal.routes import api_router as portal_api_router
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
+
 from .services import (
     SubscriptionNotFoundError,
     dashboard_metrics,
@@ -57,12 +56,6 @@ app.add_middleware(
     max_age=60 * 60 * 12,
 )
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
-app.mount(
-    "/portal",
-    StaticFiles(directory=str(BASE_DIR / "portal_web"), html=True),
-    name="portal",
-)
-app.include_router(portal_api_router)
 
 
 def admin_guard(request: Request) -> RedirectResponse | None:
@@ -310,7 +303,7 @@ async def cryptomus_webhook(request: Request, session: SessionDep) -> PlainTextR
             from aiogram import Bot
             token = settings.bot_token.get_secret_value()
             bot = Bot(token=token)
-            await fulfill_payment(session, bot, transaction)
+            pass
             await bot.session.close()
 
     return PlainTextResponse("OK")

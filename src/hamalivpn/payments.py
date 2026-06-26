@@ -1,12 +1,18 @@
-import base64
 import hashlib
-import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlencode
 
-import aiohttp
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LabeledPrice,
+    Message,
+    PreCheckoutQuery,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
@@ -33,240 +39,231 @@ PLANS = {
     "6_months": {"name": "6 Месяцев", "price": 450, "days": 180},
 }
 
+
 def buy_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for code, plan in PLANS.items():
         builder.row(
             InlineKeyboardButton(
-                text=f"💎 {plan['name']} — {plan['price']} ₽",
-                callback_data=f"buy:{code}",
+                text=f"💳 {plan['name']} — {plan['price']} ₽",
+                callback_data=f"fk:{code}",
             )
         )
     builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
     return builder.as_markup()
 
+
 @router.callback_query(F.data == "menu:buy")
 async def show_buy_menu(callback: CallbackQuery) -> None:
     await callback.answer()
     text = (
-        "💎 <b>Премиум доступ HamaliVPN</b>\n\n"
-        "Выбери тариф для оплаты. Поддерживаются банковские карты РФ, СБП и криптовалюта.\n"
-        "Подписка выдаётся автоматически после зачисления средств!"
+        "💳 <b>Оформление подписки</b>\n\n"
+        "Выберите тариф и оплатите картой или через СБП.\n"
+        "Доступ активируется автоматически сразу после оплаты."
     )
     if callback.message.photo:
         await callback.message.edit_caption(caption=text, reply_markup=buy_keyboard())
     else:
         await callback.message.edit_text(text, reply_markup=buy_keyboard())
 
-async def create_cryptomus_payment(transaction_id: str, amount: int) -> str | None:
-    api_key = settings.cryptomus_api_key.get_secret_value()
-    merchant_id = settings.cryptomus_merchant_id
-    if not api_key or not merchant_id:
+
+FK_PAY_URL = "https://pay.freekassa.ru/"
+
+
+def freekassa_link(order_id: str, amount: int) -> str | None:
+    merchant = os.getenv("FREEKASSA_MERCHANT_ID", "")
+    secret1 = os.getenv("FREEKASSA_SECRET1", "")
+    if not merchant or not secret1:
         return None
+    sign = hashlib.md5(f"{merchant}:{amount}:{secret1}:RUB:{order_id}".encode()).hexdigest()
+    return FK_PAY_URL + "?" + urlencode(
+        {"m": merchant, "oa": amount, "currency": "RUB", "o": order_id, "s": sign}
+    )
 
-    payload = {
-        "amount": str(amount),
-        "currency": "RUB",
-        "order_id": transaction_id,
-        "url_return": f"https://t.me/{settings.bot_username.lstrip('@')}",
-        "url_callback": f"{settings.public_base_url.rstrip('/')}/api/webhooks/cryptomus",
-        "is_payment_multiple": False,
-        "lifetime": "3600"
-    }
-    
-    json_payload = json.dumps(payload).encode("utf-8")
-    base64_payload = base64.b64encode(json_payload).decode("utf-8")
-    sign = hashlib.md5((base64_payload + api_key).encode("utf-8")).hexdigest()
 
-    headers = {
-        "merchant": merchant_id,
-        "sign": sign,
-        "Content-Type": "application/json"
-    }
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post("https://api.cryptomus.com/v1/payment", json=payload, headers=headers) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data["result"]["url"]
-            else:
-                logger.error(f"Cryptomus error: {await resp.text()}")
-                return None
-
-@router.callback_query(F.data.startswith("buy:"))
-async def process_buy(callback: CallbackQuery) -> None:
+@router.callback_query(F.data.startswith("fk:"))
+async def process_fk_buy(callback: CallbackQuery) -> None:
+    await callback.answer()
     code = callback.data.split(":")[1]
     plan = PLANS.get(code)
     if not plan:
-        await callback.answer("Тариф не найден", show_alert=True)
         return
-
-    await callback.message.edit_text("⏳ Генерируем ссылку на оплату...")
-
     async with SessionFactory() as session:
-        stmt = select(Customer).where(Customer.telegram_id == callback.from_user.id)
-        customer = await session.scalar(stmt)
+        customer = (
+            await session.execute(
+                select(Customer).where(Customer.telegram_id == callback.from_user.id)
+            )
+        ).scalars().first()
         if not customer:
             customer = Customer(
                 telegram_id=callback.from_user.id,
                 telegram_username=callback.from_user.username,
-                full_name=callback.from_user.full_name or ""
+                full_name=callback.from_user.full_name or "",
             )
             session.add(customer)
-            await session.commit()
-            
-        transaction = PaymentTransaction(
+            await session.flush()
+        tx = PaymentTransaction(
             customer_id=customer.id,
             amount=plan["price"],
             currency="RUB",
-            provider="cryptomus" if settings.cryptomus_api_key.get_secret_value() else "manual",
-            payload=code
+            provider="freekassa",
+            payload=code,
+            status=PaymentStatus.pending,
         )
-        session.add(transaction)
+        session.add(tx)
         await session.commit()
-        tx_id = transaction.id
+        order_id = tx.id
 
-    if settings.cryptomus_api_key.get_secret_value():
-        url = await create_cryptomus_payment(tx_id, plan["price"])
-        if url:
-            kb = InlineKeyboardBuilder()
-            kb.row(InlineKeyboardButton(text="💳 Оплатить", url=url))
-            kb.row(InlineKeyboardButton(text="🏠 Отмена", callback_data="menu:home"))
-            await callback.message.edit_text(
-                f"Оплата тарифа <b>{plan['name']}</b> ({plan['price']} ₽)\n\n"
-                f"Нажмите кнопку ниже для перехода к оплате (СБП, Карты, Криптовалюта).",
-                reply_markup=kb.as_markup(),
-                parse_mode="HTML"
-            )
-        else:
-            await callback.message.edit_text(
-                "❌ Ошибка шлюза оплаты. Попробуйте позже.",
-                reply_markup=InlineKeyboardBuilder().row(InlineKeyboardButton(text="Назад", callback_data="menu:buy")).as_markup()
-            )
-    else:
-        if not settings.manual_sbp_card:
-            await callback.message.edit_text("Оплата временно недоступна. Админ не настроил реквизиты.")
-            return
-
-        kb = InlineKeyboardBuilder()
-        kb.row(InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"manual_paid:{tx_id}"))
-        kb.row(InlineKeyboardButton(text="🏠 Отмена", callback_data="menu:home"))
-        
-        await callback.message.edit_text(
-            f"Оплата тарифа <b>{plan['name']}</b> ({plan['price']} ₽)\n\n"
-            f"Переведите <b>{plan['price']} ₽</b> по номеру:\n"
-            f"<code>{settings.manual_sbp_card}</code> ({settings.manual_sbp_bank})\n\n"
-            f"После перевода нажмите кнопку <b>✅ Я оплатил</b>.",
-            reply_markup=kb.as_markup(),
-            parse_mode="HTML"
-        )
-
-@router.callback_query(F.data.startswith("manual_paid:"))
-async def process_manual_paid(callback: CallbackQuery) -> None:
-    tx_id = callback.data.split(":")[1]
-    
-    for admin_id in settings.admin_ids:
-        kb = InlineKeyboardBuilder()
-        kb.row(
-            InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_approve_tx:{tx_id}"),
-            InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_tx:{tx_id}")
-        )
-        try:
-            await callback.bot.send_message(
-                admin_id,
-                f"📝 <b>Новый платеж (ручной)!</b>\n"
-                f"Пользователь: @{callback.from_user.username} ({callback.from_user.id})\n"
-                f"Транзакция: {tx_id}",
-                reply_markup=kb.as_markup(),
-                parse_mode="HTML"
-            )
-        except Exception:
-            pass
-
-    await callback.message.edit_text(
-        "✅ Заявка отправлена администратору.\nПодписка будет выдана сразу после проверки (обычно 5-10 минут).",
-        reply_markup=InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home")).as_markup()
+    link = freekassa_link(order_id, plan["price"])
+    if not link:
+        await callback.message.answer("Оплата картой временно недоступна. Напишите в поддержку.")
+        return
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text=f"💳 Оплатить {plan['price']} ₽", url=link))
+    kb.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    text = (
+        f"💳 <b>Оплата тарифа {plan['name']}</b>\n\n"
+        f"Сумма: <b>{plan['price']} ₽</b>\n"
+        "Способы: банковская карта, СБП.\n\n"
+        "Нажмите кнопку ниже. После оплаты подписка активируется автоматически."
     )
+    if callback.message.photo:
+        await callback.message.edit_caption(
+            caption=text, reply_markup=kb.as_markup(), parse_mode="HTML"
+        )
+    else:
+        await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
 
-async def fulfill_payment(session, bot, transaction: PaymentTransaction):
-    transaction.status = PaymentStatus.paid
-    
-    plan_code = transaction.payload
-    plan = PLANS.get(plan_code)
+
+@router.callback_query(F.data.startswith("buy:"))
+async def process_buy(callback: CallbackQuery) -> None:
+    await callback.answer()
+    code = callback.data.split(":")[1]
+    plan = PLANS.get(code)
     if not plan:
         return
 
-    customer = await session.get(Customer, transaction.customer_id)
-    if customer.referrer_id:
-        referrer = await session.get(Customer, customer.referrer_id)
-        if referrer:
-            bonus = int(plan["price"] * 0.1)
-            referrer.balance_rub += bonus
-            try:
-                await bot.send_message(
-                    referrer.telegram_id,
-                    f"🎁 Ваш реферал только что оплатил подписку!\n"
-                    f"Вам начислено <b>{bonus} ₽</b> на баланс.",
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
+    # LabeledPrice is required for Telegram Stars, currency must be "XTR"
+    prices = [LabeledPrice(label=plan["name"], amount=plan["price"])]
+
+    await callback.message.answer_invoice(
+        title=f"Подписка {plan['name']}",
+        description="Безлимитный доступ к HamaliVPN на максимальной скорости.",
+        payload=f"sub:{code}",
+        provider_token="",  # Empty for Telegram Stars
+        currency="XTR",
+        prices=prices,
+    )
+
+
+@router.pre_checkout_query()
+async def pre_checkout(pre_checkout_q: PreCheckoutQuery) -> None:
+    await pre_checkout_q.answer(ok=True)
+
+
+@router.message(F.successful_payment)
+async def successful_payment(message: Message) -> None:
+    payment = message.successful_payment
+    payload = payment.invoice_payload
+    if not payload.startswith("sub:"):
+        return
+
+    code = payload.split(":")[1]
+    plan = PLANS.get(code)
+    if not plan:
+        return
 
     gateway = make_remnawave_gateway(settings)
-    subscription = await get_latest_subscription(session, customer.telegram_id)
-    provisioned_now = False
 
-    if not subscription:
-        try:
-            sub_result = await issue_trial(
-                session,
-                gateway,
-                settings,
-                telegram_id=customer.telegram_id,
-                telegram_username=customer.telegram_username,
-                full_name=customer.full_name,
-            )
-            subscription = await session.get(Subscription, sub_result.subscription_id)
-            provisioned_now = True
-        except RemnawaveError:
-            logger.exception("Failed to provision subscription")
+    async with SessionFactory() as session:
+        # Give 10% back to referrer if exists
+        customer_stmt = select(Customer).where(Customer.telegram_id == message.from_user.id)
+        customer_result = await session.execute(customer_stmt)
+        customer = customer_result.scalars().first()
 
-    if subscription:
-        now = datetime.now(UTC)
-        if provisioned_now:
-            base = now
-        else:
-            current_expiry = as_utc(subscription.expires_at) if subscription.expires_at else now
-            base = max(current_expiry, now)
-        new_expires = base + timedelta(days=plan["days"])
+        if customer and customer.referrer_id:
+            referrer = await session.get(Customer, customer.referrer_id)
+            if referrer:
+                bonus = int(plan["price"] * 0.1)
+                referrer.balance_rub += bonus
+                try:
+                    await message.bot.send_message(
+                        referrer.telegram_id,
+                        f"🎁 Ваш реферал только что оплатил подписку!\n"
+                        f"Вам начислено <b>{bonus} ⭐️</b> на внутренний баланс.",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
 
-        subscription.expires_at = new_expires
-        subscription.status = SubscriptionStatus.active
-        await session.commit()
-
-        if subscription.remnawave_uuid:
+        # Extend or create subscription
+        subscription = await get_latest_subscription(session, message.from_user.id)
+        provisioned_now = False
+        if not subscription:
+            # No subscription yet — provision a Remnawave user via the standard flow.
             try:
-                remote = await gateway.update_user_access(
-                    user_uuid=subscription.remnawave_uuid,
-                    expires_at=new_expires,
-                    device_limit=subscription.device_limit,
-                    traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
-                    squads=settings.squad_uuids,
+                sub_result = await issue_trial(
+                    session,
+                    gateway,
+                    settings,
+                    telegram_id=message.from_user.id,
+                    telegram_username=message.from_user.username,
+                    full_name=message.from_user.full_name,
                 )
-                subscription.subscription_url = remote.subscription_url
-                subscription.remnawave_short_uuid = remote.short_uuid
-                await session.commit()
-            except Exception:
-                logger.exception("Failed to update remnawave user expiration")
+                subscription = await session.get(Subscription, sub_result.subscription_id)
+                provisioned_now = True
+            except RemnawaveError:
+                logger.exception("Failed to provision subscription after payment")
 
-        try:
-            await bot.send_message(
-                customer.telegram_id,
-                f"✅ <b>Оплата успешно получена!</b>\n\n"
-                f"Вы приобрели тариф <b>{plan['name']}</b>.\n"
-                f"Подписка продлена до {subscription.expires_at.strftime('%d.%m.%Y')}.\n\n"
-                "Перейдите в «👤 Моя подписка», чтобы посмотреть статус.",
-                parse_mode="HTML"
+        if subscription:
+            now = datetime.now(UTC)
+            if provisioned_now:
+                # issue_trial grants the long-lived test window (test_access_days);
+                # a paid plan must measure its term from "now", not from that sentinel.
+                base = now
+            else:
+                # Top up an existing subscription: extend from the later of "now"
+                # and the current expiry so active time is never lost.
+                current_expiry = (
+                    as_utc(subscription.expires_at) if subscription.expires_at else now
+                )
+                base = max(current_expiry, now)
+            new_expires = base + timedelta(days=plan["days"])
+
+            subscription.expires_at = new_expires
+            subscription.status = SubscriptionStatus.active
+            await session.commit()
+
+            # Extend in Remnawave
+            if subscription.remnawave_uuid:
+                try:
+                    remote = await gateway.update_user_access(
+                        user_uuid=subscription.remnawave_uuid,
+                        expires_at=new_expires,
+                        device_limit=subscription.device_limit,
+                        traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
+                        squads=settings.squad_uuids,
+                    )
+                    subscription.subscription_url = remote.subscription_url
+                    subscription.remnawave_short_uuid = remote.short_uuid
+                    await session.commit()
+                except Exception:
+                    logger.exception("Failed to update remnawave user expiration")
+        else:
+            logger.error(
+                "Payment succeeded, but subscription was not created",
+                extra={"telegram_id": message.from_user.id, "payload": payload},
             )
-        except Exception:
-            pass
+            await message.answer(
+                "✅ Оплата прошла, но доступ не выдался автоматически.\n"
+                "Напишите в поддержку — мы вручную активируем подписку.",
+                parse_mode="HTML",
+            )
+            return
+
+    text = (
+        f"✅ <b>Оплата прошла успешно!</b>\n\n"
+        f"Вы приобрели тариф <b>{plan['name']}</b>.\n"
+        f"Подписка продлена до {subscription.expires_at.strftime('%d.%m.%Y')}."
+    )
+    await message.answer(text, parse_mode="HTML")

@@ -20,8 +20,6 @@ class WithdrawState(StatesGroup):
 
 def referrals_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="💎 Купить подписку", callback_data="menu:buy"))
-    builder.row(InlineKeyboardButton(text="💸 Вывести средства", callback_data="referrals:withdraw"))
     builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
     return builder.as_markup()
 
@@ -43,12 +41,10 @@ async def show_referrals_menu(callback: CallbackQuery) -> None:
     ref_link = f"https://t.me/{bot_info.username}?start=ref_{callback.from_user.id}"
 
     text = (
-        "🎁 <b>Реферальная система</b>\n\n"
-        f"Приглашайте друзей и получайте <b>10%</b> от суммы их покупок на ваш баланс!\n\n"
-        f"Ваша ссылка для приглашения:\n<code>{ref_link}</code>\n\n"
-        f"👥 Приглашено друзей: <b>{ref_count}</b>\n"
-        f"💰 Ваш баланс: <b>{balance} ₽</b>\n\n"
-        "<i>Вы можете вывести средства на карту РФ или использовать их для оплаты подписки.</i>"
+        "🎁 <b>Реферальная программа</b>\n\n"
+        f"Приглашайте друзей, чтобы они тоже получили надежный и быстрый VPN совершенно бесплатно!\n\n"
+        f"Отправьте им эту ссылку:\n<code>{ref_link}</code>\n\n"
+        f"👥 Приглашено друзей: <b>{ref_count}</b>"
     )
 
     kb = referrals_keyboard()

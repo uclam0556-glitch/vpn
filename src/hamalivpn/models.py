@@ -46,6 +46,9 @@ class Customer(Base):
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     referrer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id"), nullable=True)
     balance_rub: Mapped[int] = mapped_column(Integer, default=0)
+    role: Mapped[str] = mapped_column(String(32), default="client", server_default="client")
+    reseller_level: Mapped[int] = mapped_column(default=1, server_default="1")
+    portal_access_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
@@ -156,3 +159,26 @@ class WithdrawalRequest(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow
     )
+
+
+class BalanceTransaction(Base):
+    __tablename__ = "balance_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    customer_id: Mapped[int] = mapped_column(ForeignKey("customers.id"), index=True)
+    amount: Mapped[int] = mapped_column(Integer)
+    type: Mapped[str] = mapped_column(String(32))
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Tariff(Base):
+    __tablename__ = "tariffs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(64))
+    duration_days: Mapped[int] = mapped_column(Integer)
+    price_rub: Mapped[int] = mapped_column(Integer)
+    device_limit: Mapped[int] = mapped_column(Integer, default=1)
+    traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
