@@ -684,6 +684,75 @@ async def admin_disable_key(uuid: str, user: dict = Depends(get_portal_user), db
     return {"status": "ok"}
 
 
+class AdminCreateKeyRequest(BaseModel):
+    tariff_id: int | None = None
+    days: int | None = None
+    devices: int | None = None
+    client_name: str = ""
+
+
+@app.post("/api/admin/keys/create")
+async def admin_create_key(req: AdminCreateKeyRequest, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    """Админ создаёт ключ напрямую — без баланса и без лимита."""
+    from datetime import datetime, UTC, timedelta
+    admin = await _admin_or_403(user, db)
+
+    if req.tariff_id:
+        tariff = await db.get(Tariff, req.tariff_id)
+        if not tariff:
+            raise HTTPException(404, "Tariff not found")
+        days, devices = tariff.duration_days, tariff.device_limit
+        traffic_gb, name = tariff.traffic_limit_gb, tariff.name
+    else:
+        days = req.days or 30
+        devices = req.devices or 1
+        traffic_gb, name = 0, f"Админ · {days} дн."
+
+    expires_at = datetime.now(UTC) + timedelta(days=days)
+    settings = get_settings()
+    gateway = make_remnawave_gateway(settings)
+
+    fake_tg = int(secrets.token_hex(6), 16)
+    client = Customer(
+        telegram_id=fake_tg,
+        full_name=req.client_name or "Ключ (админ)",
+        referrer_id=admin.id,
+    )
+    db.add(client)
+    await db.flush()
+
+    try:
+        remote = await gateway.create_user(
+            username=f"adm_{client.id}_{secrets.token_hex(2)}",
+            telegram_id=fake_tg,
+            expires_at=expires_at,
+            device_limit=devices,
+            traffic_limit_bytes=traffic_gb * 1024**3,
+            squads=settings.squad_uuids,
+            description="Admin-generated key",
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Remnawave Error: {str(e)}")
+
+    access_token = secrets.token_urlsafe(32)
+    sub = Subscription(
+        customer_id=client.id,
+        plan_code=name,
+        status=SubscriptionStatus.active,
+        remnawave_uuid=remote.uuid,
+        remnawave_short_uuid=remote.short_uuid,
+        subscription_url=remote.subscription_url,
+        access_token=access_token,
+        device_limit=devices,
+        traffic_limit_gb=traffic_gb,
+        expires_at=expires_at,
+    )
+    db.add(sub)
+    await db.commit()
+    connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
+    return {"status": "ok", "connect_url": connect_url, "sub_url": sub.subscription_url}
+
+
 # ── FreeKassa: приём оплаты и автоматическая выдача подписки ──────────────────
 FK_PLAN_DAYS = {"1_month": 30, "2_months": 60, "3_months": 90, "6_months": 180}
 FK_PLAN_DEVICES = {"1_month": 1, "2_months": 3, "3_months": 5, "6_months": 5}

@@ -537,7 +537,8 @@ async function viewAllKeys(view) {
   const q = state.cache.keysQ || "";
   const keys = await api(`/admin/keys?q=${encodeURIComponent(q)}`);
   view.innerHTML = `
-    <div class="section-title"><h2>Все ключи</h2><span class="muted">${keys.length}</span></div>
+    <div class="section-title"><h2>Все ключи <span class="muted">${keys.length}</span></h2>
+      <button class="btn btn--primary btn--sm" data-action="add-key">+ Создать ключ</button></div>
     <div class="field"><input class="input" id="keySearch" placeholder="Поиск по имени или Telegram ID" value="${esc(q)}" /></div>
     <div class="rows">
       ${keys.length ? keys.map((k) => {
@@ -559,6 +560,46 @@ async function adminDisableKey(uuid) {
   if (!confirm("Отключить ключ? Клиент потеряет доступ.")) return;
   try { await api(`/admin/keys/${uuid}/disable`, { method: "POST" }); toast("Ключ отключён", "ok"); renderTab(); }
   catch (err) { toast(err.message, "err"); }
+}
+async function openAdminCreateKeyModal() {
+  const tariffs = await api("/admin/tariffs").catch(() => []);
+  const opts = tariffs.map((t) =>
+    `<option value="${t.id}">${esc(t.name)} (${t.duration_days} дн., ${t.device_limit} устр.)</option>`).join("");
+  modal(`
+    <h3>Создать ключ</h3>
+    <p class="sub">Ключ выдаётся напрямую — без баланса и без лимита.</p>
+    <div class="field"><label>Имя / метка (необязательно)</label>
+      <input class="input" id="akName" placeholder="напр. Личный" /></div>
+    <div class="field"><label>Тариф</label>
+      <select class="select" id="akTariff"><option value="">— свой срок —</option>${opts}</select></div>
+    <div class="field"><label>Свой срок (если без тарифа): дней / устройств</label>
+      <div style="display:flex;gap:8px">
+        <input class="input" id="akDays" type="number" placeholder="дней" value="30" />
+        <input class="input" id="akDevices" type="number" placeholder="устройств" value="5" />
+      </div></div>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" data-action="close">Отмена</button>
+      <button class="btn btn--primary" id="akCreate">Создать ключ</button>
+    </div>`);
+  document.getElementById("akCreate").addEventListener("click", async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Создаём…";
+    const tariffId = document.getElementById("akTariff").value;
+    const body = { client_name: document.getElementById("akName").value.trim() };
+    if (tariffId) {
+      body.tariff_id = Number(tariffId);
+    } else {
+      body.days = Number(document.getElementById("akDays").value) || 30;
+      body.devices = Number(document.getElementById("akDevices").value) || 1;
+    }
+    try {
+      const r = await api("/admin/keys/create", { method: "POST", body });
+      closeModal(); toast("Ключ создан", "ok"); renderTab();
+      showSubModal(r.connect_url || r.sub_url);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = "Создать ключ";
+      toast(err.message, "err");
+    }
+  });
 }
 
 async function openIssueKeyModal(id) {
@@ -588,6 +629,7 @@ document.addEventListener("click", (e) => {
   if (a === "close") return closeModal();
   if (a === "add-reseller") return openCreateResellerModal();
   if (a === "add-tariff") return openTariffModal(null);
+  if (a === "add-key") return openAdminCreateKeyModal();
   if (t.dataset.copy !== undefined && t.dataset.copy !== "") return copy(t.dataset.copy, "Скопировано");
   if (t.dataset.buy) return openBuyModal(JSON.parse(t.dataset.buy));
   if (t.dataset.client) return showClientModal(JSON.parse(t.dataset.client));
