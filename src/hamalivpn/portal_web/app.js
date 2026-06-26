@@ -235,7 +235,7 @@ function openBuyModal(t) {
       }});
       closeModal();
       toast("Ключ создан, баланс обновлён", "ok");
-      showSubModal(r.sub_url);
+      showSubModal(r.connect_url || r.sub_url);
       state.cache.balance = (state.cache.balance ?? 0) - t.price_rub;
     } catch (err) {
       btn.disabled = false; btn.textContent = `Списать ${rub(t.price_rub)}`;
@@ -245,11 +245,14 @@ function openBuyModal(t) {
 }
 function showSubModal(url) {
   modal(`
-    <h3>Ключ готов</h3>
-    <p class="sub">Передайте ссылку клиенту — он импортирует её в приложение.</p>
-    <div class="field"><label>Ссылка подписки</label><div class="codebox">${esc(url || "—")}</div></div>
+    <h3>Ключ готов 🎉</h3>
+    <p class="sub">Отправьте клиенту эту ссылку — откроется красивая страница с установкой приложения и подключением в один клик.</p>
+    <div class="field"><label>Ссылка для клиента</label><div class="codebox">${esc(url || "—")}</div></div>
     <div class="modal__actions">
-      <button class="btn btn--primary" data-copy="${esc(url || "")}">Скопировать</button>
+      <button class="btn btn--primary" data-copy="${esc(url || "")}">Скопировать ссылку</button>
+      ${url ? `<button class="btn" data-openurl="${esc(url)}">Открыть</button>` : ""}
+    </div>
+    <div class="modal__actions" style="margin-top:10px">
       <button class="btn btn--ghost" data-action="close">Готово</button>
     </div>`);
 }
@@ -279,30 +282,20 @@ function clientRow(c) {
   </div>`;
 }
 function showClientModal(c) {
-  const url = c.sub_url || "";
+  const url = c.connect_url || c.sub_url || "";
   modal(`
     <h3>${esc(c.name || "Клиент")}</h3>
     <p class="sub">${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)}</p>
-    <div class="field"><label>Ссылка подписки</label><div class="codebox">${esc(url || "—")}</div></div>
-    <div class="field"><label>Лимит устройств</label>
-      <input class="input" id="devLimit" type="number" min="1" max="20" value="${c.device_limit || 1}" /></div>
+    <div class="field"><label>Ссылка для клиента</label><div class="codebox">${esc(url || "—")}</div></div>
     <div class="modal__actions">
-      <button class="btn btn--primary" data-copy="${esc(url)}">Скопировать ссылку</button>
-      <button class="btn" id="saveDev">Сохранить лимит</button>
+      <button class="btn btn--primary" data-copy="${esc(url)}">Скопировать</button>
+      ${url ? `<button class="btn" data-openurl="${esc(url)}">Открыть</button>` : ""}
     </div>
     <div class="modal__actions" style="margin-top:10px">
       <button class="btn btn--danger" id="revoke">Отозвать ключ</button>
       <button class="btn btn--ghost" data-action="close">Закрыть</button>
     </div>`);
   const uuid = c.remnawave_uuid;
-  document.getElementById("saveDev").addEventListener("click", async () => {
-    if (!uuid) return toast("Нет ключа для изменения", "err");
-    try {
-      await api(`/reseller/clients/${uuid}`, { method: "PUT", body: {
-        devices_limit: Number(document.getElementById("devLimit").value) || 1 }});
-      toast("Лимит обновлён", "ok");
-    } catch (err) { toast(err.message, "err"); }
-  });
   document.getElementById("revoke").addEventListener("click", async () => {
     if (!uuid) return toast("Нет ключа", "err");
     if (!confirm("Отозвать ключ? Клиент потеряет доступ.")) return;
@@ -549,9 +542,10 @@ async function openIssueKeyModal(id) {
 // ── delegation ─────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
   const t = e.target.closest(
-    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-manage],[data-tariff-edit],[data-key-disable]"
+    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-openurl],[data-manage],[data-tariff-edit],[data-key-disable]"
   );
   if (!t) return;
+  if (t.dataset.openurl) return window.open(t.dataset.openurl, "_blank");
   if (t.dataset.tab) { state.tab = t.dataset.tab; renderShell(); return; }
   const a = t.dataset.action;
   if (a === "logout") { clearKey(); state.me = null; renderLogin(); return; }

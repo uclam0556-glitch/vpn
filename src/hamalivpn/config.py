@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     bot_token: SecretStr = SecretStr("")
     bot_username: str = "HamaliVpn_bot"
     admin_telegram_ids: str = ""
-    support_username: str = "HamaliVpn_bot"
+    support_username: str = "Hamali_Support"
 
     admin_username: str = "admin"
     admin_password: SecretStr = SecretStr("change-me")

@@ -303,7 +303,8 @@ async def get_reseller_clients(user: dict = Depends(get_portal_user), db: AsyncS
         raise HTTPException(403, "Not a reseller")
         
     clients = (await db.execute(select(Customer).options(selectinload(Customer.subscriptions)).filter_by(referrer_id=customer.id).order_by(desc(Customer.created_at)))).scalars().all()
-    
+
+    base = get_settings().public_base_url.rstrip("/")
     res = []
     for c in clients:
         sub = next((s for s in c.subscriptions if str(s.status).split('.')[-1] == "active"), None)
@@ -315,8 +316,9 @@ async def get_reseller_clients(user: dict = Depends(get_portal_user), db: AsyncS
             "sub_status": str(sub.status).split('.')[-1] if sub else "none",
             "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
             "sub_url": sub.subscription_url if sub else None,
+            "connect_url": f"{base}/connect/{sub.access_token}" if sub and sub.access_token else None,
             "remnawave_uuid": sub.remnawave_uuid if sub else None,
-            "device_limit": sub.devices_limit if sub else 0
+            "device_limit": sub.device_limit if sub else 0
         })
     return res
 
@@ -376,6 +378,7 @@ async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db:
         raise HTTPException(500, f"Remnawave Error: {str(e)}")
         
     # Create Sub
+    access_token = secrets.token_urlsafe(32)
     sub = Subscription(
         customer_id=new_client.id,
         plan_code=tariff.name,
@@ -383,16 +386,16 @@ async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db:
         remnawave_uuid=remote_user.uuid,
         remnawave_short_uuid=remote_user.short_uuid,
         subscription_url=remote_user.subscription_url,
-        access_token=secrets.token_urlsafe(32),
+        access_token=access_token,
         device_limit=tariff.device_limit,
         traffic_limit_gb=tariff.traffic_limit_gb,
         expires_at=expires_at
     )
     db.add(sub)
-    
+
     # Deduct balance
     customer.balance_rub -= tariff.price_rub
-    
+
     # Ledger
     tx = BalanceTransaction(
         customer_id=customer.id,
@@ -401,9 +404,15 @@ async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db:
         description=f"Purchased {tariff.name} for {new_client.full_name}"
     )
     db.add(tx)
-    
+
     await db.commit()
-    return {"status": "ok", "client_id": new_client.id, "sub_url": sub.subscription_url}
+    connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
+    return {
+        "status": "ok",
+        "client_id": new_client.id,
+        "sub_url": sub.subscription_url,
+        "connect_url": connect_url,
+    }
 
 class AdminTopupRequest(BaseModel):
     amount: int

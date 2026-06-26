@@ -9,17 +9,6 @@
       <div class="cv2-logo-mark">H</div>
       <span class="cv2-logo-name">HamaliVPN</span>
     </div>
-    {% if not expired %}
-    <div class="cv2-status-pill {% if health_status == 'healthy' %}pill-green{% elif health_status == 'degraded' %}pill-yellow{% else %}pill-blue{% endif %}">
-      {% if health_status == "healthy" %}
-        <span class="pill-dot"></span> {{ endpoint_count }} сервера активны
-      {% elif health_status == "degraded" %}
-        <span class="pill-dot"></span> Требует проверки
-      {% else %}
-        <span class="pill-dot"></span> Готово к подключению
-      {% endif %}
-    </div>
-    {% endif %}
   </header>
 
   {% if expired %}
@@ -74,17 +63,6 @@
           <div class="cv2-app-info">
             <b>v2RayTun</b>
             <small>iOS · Android · Desktop</small>
-          </div>
-          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-app" href="https://play.google.com/store/apps/details?id=com.v2raytun.android" target="_blank">
-          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #22c55e, #16a34a);">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M17.523 15.341L7.21 21.065a1 1 0 0 1-1.489-.87V3.805a1 1 0 0 1 1.489-.87l10.313 5.724a1 1 0 0 1 0 1.74l-10.313 5.724"/></svg>
-          </div>
-          <div class="cv2-app-info">
-            <b>v2RayTun</b>
-            <small>Android</small>
           </div>
           <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </a>
@@ -191,24 +169,6 @@
           </div>
         </div>
       </details>
-    </div>
-  </div>
-
-  <!-- SUBSCRIPTION INFO BAR -->
-  <div class="cv2-info-bar">
-    <div class="cv2-info-item">
-      <span class="cv2-info-label">Устройств</span>
-      <span class="cv2-info-value">{{ subscription.device_limit }}</span>
-    </div>
-    <div class="cv2-info-sep"></div>
-    <div class="cv2-info-item">
-      <span class="cv2-info-label">Трафик</span>
-      <span class="cv2-info-value">{{ "∞" if subscription.traffic_limit_gb == 0 else subscription.traffic_limit_gb ~ " ГБ" }}</span>
-    </div>
-    <div class="cv2-info-sep"></div>
-    <div class="cv2-info-item">
-      <span class="cv2-info-label">Серверов</span>
-      <span class="cv2-info-value">{{ endpoint_count if endpoint_count else "—" }}</span>
     </div>
   </div>
 
