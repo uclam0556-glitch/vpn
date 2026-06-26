@@ -5,7 +5,7 @@ import time
 from urllib.parse import parse_qsl
 from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -751,6 +751,99 @@ async def admin_create_key(req: AdminCreateKeyRequest, user: dict = Depends(get_
     await db.commit()
     connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
     return {"status": "ok", "connect_url": connect_url, "sub_url": sub.subscription_url}
+
+
+# ── Публичные правовые документы (URL для бота и платёжных систем) ────────────
+
+def _doc_page(title: str, body: str) -> HTMLResponse:
+    html = f"""<!doctype html><html lang="ru"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} · HamaliVPN</title>
+<style>
+:root{{color-scheme:dark}}
+body{{margin:0;background:#07080f;color:#e7eaf6;font:16px/1.7 -apple-system,Segoe UI,Roboto,sans-serif}}
+.wrap{{max-width:760px;margin:0 auto;padding:40px 22px 80px}}
+.brand{{display:flex;align-items:center;gap:10px;margin-bottom:24px}}
+.mark{{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,#7c5cff,#19d3c5);
+display:grid;place-content:center;color:#07080f;font-weight:800}}
+h1{{font-size:26px;margin:0 0 6px}}
+h3{{font-size:17px;margin:26px 0 6px;color:#fff}}
+p{{margin:8px 0;color:#c3c8e0}}
+.date{{color:#7a80a6;font-size:13px;margin-bottom:18px}}
+.foot{{margin-top:40px;color:#5b6188;font-size:13px;border-top:1px solid rgba(255,255,255,.08);padding-top:16px}}
+a{{color:#7c5cff}}
+</style></head><body><div class="wrap">
+<div class="brand"><div class="mark">H</div><b>HamaliVPN</b></div>
+<h1>{title}</h1><div class="date">Редакция от 26.06.2026</div>
+{body}
+<div class="foot">HamaliVPN · поддержка: <a href="https://t.me/Hamali_Support">@Hamali_Support</a></div>
+</div></body></html>"""
+    return HTMLResponse(html)
+
+
+_PRIVACY_BODY = """
+<p>Политика регулирует сбор, использование и защиту информации пользователей сервиса.
+Собираются идентификаторы аккаунта, техническая информация и история взаимодействий. Данные
+используются для работы сервиса, связи с пользователем и анализа. Передача третьим лицам возможна
+только в законодательно установленных случаях или с согласия пользователя. Хранение — в течение
+необходимого срока, защита — в разумных пределах. Администрация вправе вносить изменения без
+уведомления; согласие считается принятым при дальнейшем использовании.</p>
+<h3>1. Общие положения</h3>
+<p>1.1. Политика регулирует порядок обработки и защиты информации, передаваемой при использовании
+сервиса (далее — «Сервис»).<br>1.2. Используя Сервис, Пользователь подтверждает согласие; при
+несогласии обязан прекратить использование.</p>
+<h3>2. Сбор информации</h3>
+<p>2.1. Могут собираться: идентификаторы аккаунта (логин, ID, никнейм); техническая информация
+(IP-адрес, браузер, устройство, ОС); история взаимодействий.<br>2.2. Сервис не требует паспортных
+данных, документов, фотографий или иной личной информации сверх минимально необходимой.</p>
+<h3>3. Использование информации</h3>
+<p>3.1. Только для: работы функционала; связи с Пользователем (уведомления и поддержка); анализа и
+улучшения Сервиса.</p>
+<h3>4. Передача третьим лицам</h3>
+<p>4.1. Не передаётся, кроме случаев: требования закона; исполнения обязательств перед Пользователем
+(например, платёжные системы); согласия Пользователя.</p>
+<h3>5. Хранение и защита</h3>
+<p>5.1. Данные хранятся в течение срока, необходимого для целей обработки.<br>5.2. Принимаются
+разумные меры защиты; абсолютная безопасность при передаче через интернет не гарантируется.</p>
+<h3>6. Отказ от ответственности</h3>
+<p>6.1. Передача информации через интернет сопряжена с рисками.<br>6.2. Администрация не отвечает за
+утрату, кражу или раскрытие данных по вине третьих лиц или самого Пользователя.</p>
+<h3>7. Изменения</h3>
+<p>7.1. Администрация вправе изменять Политику без предварительного уведомления.<br>7.2. Продолжение
+использования означает согласие с новой редакцией.</p>
+"""
+
+_TERMS_BODY = """
+<h3>1. Предмет</h3>
+<p>1.1. Сервис предоставляет доступ к VPN для шифрования трафика и обеспечения приватности.<br>
+1.2. Используя Сервис, Пользователь принимает условия Соглашения.</p>
+<h3>2. Условия использования</h3>
+<p>2.1. Сервис предоставляется «как есть»; Пользователь использует его на свой риск.<br>
+2.2. Запрещено использовать Сервис для противоправных действий, спама, атак и иных нарушений
+закона.<br>2.3. Оплаченный доступ — для личного использования в пределах лимита устройств тарифа.</p>
+<h3>3. Оплата и доступ</h3>
+<p>3.1. Доступ предоставляется на срок выбранного тарифа после оплаты.<br>3.2. Стоимость и сроки
+указаны в боте на момент покупки.</p>
+<h3>4. Возврат средств</h3>
+<p>4.1. Доступ — цифровая услуга, предоставляется немедленно. Возврат возможен при технической
+невозможности оказания услуги по вине Сервиса в течение 24 часов после оплаты.<br>4.2. По вопросам
+возврата — обратитесь в поддержку.</p>
+<h3>5. Ответственность</h3>
+<p>5.1. Сервис не отвечает за перебои из-за действий провайдеров, блокировок или форс-мажора.<br>
+5.2. Сервис не хранит логи пользовательского трафика.</p>
+<h3>6. Изменения</h3>
+<p>6.1. Администрация вправе изменять Соглашение; продолжение использования означает согласие.</p>
+"""
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page():
+    return _doc_page("Политика конфиденциальности", _PRIVACY_BODY)
+
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms_page():
+    return _doc_page("Пользовательское соглашение", _TERMS_BODY)
 
 
 # ── FreeKassa: приём оплаты и автоматическая выдача подписки ──────────────────
