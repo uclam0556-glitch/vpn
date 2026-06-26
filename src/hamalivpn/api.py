@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from .db import get_session
 from .models import Customer, PaymentStatus, PaymentTransaction
 import json
@@ -416,7 +416,7 @@ async def get_all_resellers(user: dict = Depends(get_portal_user), db: AsyncSess
         raise HTTPException(403, "Not an admin")
         
     resellers = (await db.execute(select(Customer).filter(Customer.role.in_(["reseller", "super_admin"])))).scalars().all()
-    return [{"id": r.id, "telegram_id": r.telegram_id, "name": r.full_name, "balance": r.balance_rub, "level": r.reseller_level} for r in resellers]
+    return [{"id": r.id, "telegram_id": r.telegram_id, "name": r.full_name, "balance": r.balance_rub, "level": r.reseller_level, "is_blocked": r.is_blocked} for r in resellers]
 
 @app.post("/api/admin/resellers/{reseller_id}/topup")
 async def topup_reseller(reseller_id: int, req: AdminTopupRequest, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
@@ -471,6 +471,193 @@ async def create_reseller(req: CreateResellerRequest, user: dict = Depends(get_p
     customer.portal_access_key = new_key
     await db.commit()
     return {"status": "ok", "id": customer.id, "name": customer.full_name, "portal_access_key": new_key}
+
+
+# ── Admin: полное управление из панели ───────────────────────────────────────
+
+async def _admin_or_403(user: dict, db: AsyncSession) -> Customer:
+    c = (await db.execute(select(Customer).filter_by(telegram_id=user["id"]))).scalars().first()
+    if not c or c.role != "super_admin":
+        raise HTTPException(403, "Not an admin")
+    return c
+
+
+@app.get("/api/admin/dashboard")
+async def admin_dashboard(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    resellers = (await db.execute(
+        select(func.count()).select_from(Customer).where(Customer.role.in_(["reseller", "super_admin"]))
+    )).scalar() or 0
+    clients = (await db.execute(
+        select(func.count()).select_from(Customer).where(Customer.referrer_id.is_not(None))
+    )).scalar() or 0
+    active_subs = (await db.execute(
+        select(func.count()).select_from(Subscription).where(Subscription.status == SubscriptionStatus.active)
+    )).scalar() or 0
+    revenue = (await db.execute(
+        select(func.coalesce(func.sum(PaymentTransaction.amount), 0)).where(PaymentTransaction.status == PaymentStatus.paid)
+    )).scalar() or 0
+    reseller_balance = (await db.execute(
+        select(func.coalesce(func.sum(Customer.balance_rub), 0)).where(Customer.role.in_(["reseller", "super_admin"]))
+    )).scalar() or 0
+    recent = (await db.execute(
+        select(PaymentTransaction).where(PaymentTransaction.status == PaymentStatus.paid)
+        .order_by(desc(PaymentTransaction.created_at)).limit(8)
+    )).scalars().all()
+    return {
+        "resellers": resellers,
+        "clients": clients,
+        "active_subs": active_subs,
+        "revenue_rub": int(revenue),
+        "reseller_balance_rub": int(reseller_balance),
+        "recent_payments": [
+            {"amount": t.amount, "provider": t.provider, "payload": t.payload,
+             "date": t.created_at.isoformat() if t.created_at else None}
+            for t in recent
+        ],
+    }
+
+
+class TariffIn(BaseModel):
+    name: str
+    duration_days: int
+    price_rub: int
+    device_limit: int = 1
+    traffic_limit_gb: int = 0
+    is_active: bool = True
+
+
+@app.get("/api/admin/tariffs")
+async def admin_list_tariffs(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    rows = (await db.execute(select(Tariff).order_by(Tariff.price_rub))).scalars().all()
+    return [
+        {"id": t.id, "name": t.name, "duration_days": t.duration_days, "price_rub": t.price_rub,
+         "device_limit": t.device_limit, "traffic_limit_gb": t.traffic_limit_gb, "is_active": t.is_active}
+        for t in rows
+    ]
+
+
+@app.post("/api/admin/tariffs")
+async def admin_create_tariff(req: TariffIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    t = Tariff(name=req.name, duration_days=req.duration_days, price_rub=req.price_rub,
+               device_limit=req.device_limit, traffic_limit_gb=req.traffic_limit_gb, is_active=req.is_active)
+    db.add(t)
+    await db.commit()
+    return {"status": "ok", "id": t.id}
+
+
+@app.patch("/api/admin/tariffs/{tid}")
+async def admin_edit_tariff(tid: int, req: TariffIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    t = await db.get(Tariff, tid)
+    if not t:
+        raise HTTPException(404, "Tariff not found")
+    t.name, t.duration_days, t.price_rub = req.name, req.duration_days, req.price_rub
+    t.device_limit, t.traffic_limit_gb, t.is_active = req.device_limit, req.traffic_limit_gb, req.is_active
+    await db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/api/admin/tariffs/{tid}")
+async def admin_delete_tariff(tid: int, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    t = await db.get(Tariff, tid)
+    if t:
+        await db.delete(t)
+        await db.commit()
+    return {"status": "ok"}
+
+
+class BlockIn(BaseModel):
+    blocked: bool
+
+
+class LevelIn(BaseModel):
+    level: int
+
+
+class BalanceAdjustIn(BaseModel):
+    amount: int
+    comment: str = ""
+
+
+@app.post("/api/admin/resellers/{rid}/block")
+async def admin_block_reseller(rid: int, req: BlockIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    r = await db.get(Customer, rid)
+    if not r:
+        raise HTTPException(404, "Reseller not found")
+    r.is_blocked = req.blocked
+    await db.commit()
+    return {"status": "ok", "is_blocked": r.is_blocked}
+
+
+@app.post("/api/admin/resellers/{rid}/level")
+async def admin_set_level(rid: int, req: LevelIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    r = await db.get(Customer, rid)
+    if not r:
+        raise HTTPException(404, "Reseller not found")
+    r.reseller_level = req.level
+    await db.commit()
+    return {"status": "ok", "level": r.reseller_level}
+
+
+@app.post("/api/admin/resellers/{rid}/balance")
+async def admin_adjust_balance(rid: int, req: BalanceAdjustIn, admin_user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    admin = await _admin_or_403(admin_user, db)
+    r = await db.get(Customer, rid)
+    if not r:
+        raise HTTPException(404, "Reseller not found")
+    r.balance_rub += req.amount
+    db.add(BalanceTransaction(
+        customer_id=r.id, amount=req.amount, type="adjust",
+        description=req.comment or f"Корректировка админом {admin.id}",
+    ))
+    await db.commit()
+    return {"status": "ok", "new_balance": r.balance_rub}
+
+
+@app.get("/api/admin/keys")
+async def admin_all_keys(q: str = "", user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    rows = (await db.execute(
+        select(Subscription).options(selectinload(Subscription.customer))
+        .order_by(desc(Subscription.created_at)).limit(300)
+    )).scalars().all()
+    res = []
+    for s in rows:
+        cust = s.customer
+        name = (cust.full_name if cust else "") or ""
+        if q and q.lower() not in name.lower() and q not in str(cust.telegram_id if cust else ""):
+            continue
+        res.append({
+            "uuid": s.remnawave_uuid,
+            "client": name,
+            "telegram_id": cust.telegram_id if cust else None,
+            "status": str(s.status).split(".")[-1],
+            "expires_at": s.expires_at.isoformat() if s.expires_at else None,
+            "reseller_id": cust.referrer_id if cust else None,
+        })
+    return res
+
+
+@app.post("/api/admin/keys/{uuid}/disable")
+async def admin_disable_key(uuid: str, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    sub = (await db.execute(select(Subscription).filter_by(remnawave_uuid=uuid))).scalars().first()
+    if not sub:
+        raise HTTPException(404, "Key not found")
+    gw = make_remnawave_gateway(get_settings())
+    try:
+        await gw.disable_user(uuid)
+    except Exception:
+        pass
+    sub.status = SubscriptionStatus.disabled
+    await db.commit()
+    return {"status": "ok"}
 
 
 # ── FreeKassa: приём оплаты и автоматическая выдача подписки ──────────────────

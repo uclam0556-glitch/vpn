@@ -121,8 +121,10 @@ function renderLogin(error = "") {
 
 // ── shell ────────────────────────────────────────────────────────────────
 function tabsFor(role) {
-  const base = [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
-  return role === "super_admin" ? [...base, ["resellers", "Реселлеры"]] : base;
+  if (role === "super_admin") {
+    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["tariffs", "Тарифы"], ["allkeys", "Ключи"]];
+  }
+  return [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
 }
 
 function renderShell() {
@@ -155,6 +157,7 @@ async function renderTab() {
   const view = document.getElementById("view");
   const map = {
     dashboard: viewDashboard, buy: viewBuy, clients: viewClients, resellers: viewResellers,
+    admin: viewAdminDashboard, tariffs: viewTariffs, allkeys: viewAllKeys,
   };
   try { await (map[state.tab] || (() => {}))(view); }
   catch (err) { if (err.message !== "unauthorized") view.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
@@ -362,33 +365,173 @@ function resellerRow(r) {
   return `<div class="row">
     <div class="row__main">
       <div class="row__title">${esc(r.name || "Без имени")}
-        ${r.level ? `<span class="pill">${LEVEL_RU[r.level] || r.level}</span>` : ""}</div>
-      <div class="row__meta">ID ${r.id} · tg ${r.telegram_id} · Баланс: ${rub(r.balance)}</div>
+        ${r.level ? `<span class="pill">${LEVEL_RU[r.level] || r.level}</span>` : ""}
+        ${r.is_blocked ? `<span class="tag tag--disabled">Блок</span>` : ""}</div>
+      <div class="row__meta">ID ${r.id} · tg ${r.telegram_id ?? "—"} · Баланс: ${rub(r.balance)}</div>
     </div>
     <div class="row__actions">
-      <button class="btn btn--sm" data-topup="${r.id}" data-name="${esc(r.name || "")}">Пополнить</button>
-      <button class="btn btn--sm" data-issuekey="${r.id}">Ключ доступа</button>
+      <button class="btn btn--sm" data-manage='${esc(JSON.stringify(r))}'>Управление</button>
     </div>
   </div>`;
 }
-function openTopupModal(id, name) {
+
+function openResellerManageModal(r) {
   modal(`
-    <h3>Пополнить баланс</h3>
-    <p class="sub">${esc(name)} (ID ${id})</p>
-    <div class="field"><label>Сумма, ₽</label><input class="input" id="tAmt" type="number" min="1" /></div>
+    <h3>${esc(r.name || "Реселлер")}</h3>
+    <p class="sub">ID ${r.id} · tg ${r.telegram_id ?? "—"} · Баланс: <b>${rub(r.balance)}</b></p>
+    <div class="field"><label>Уровень</label>
+      <select class="select" id="mLevel">
+        <option value="1" ${r.level == 1 ? "selected" : ""}>Start</option>
+        <option value="2" ${r.level == 2 ? "selected" : ""}>Partner</option>
+        <option value="3" ${r.level == 3 ? "selected" : ""}>VIP</option>
+      </select></div>
+    <div class="field"><label>Изменить баланс, ₽ (минус — списать)</label>
+      <input class="input" id="mAmt" type="number" placeholder="напр. 5000 или -1000" /></div>
     <div class="modal__actions">
-      <button class="btn btn--ghost" data-action="close">Отмена</button>
-      <button class="btn btn--primary" id="tGo">Пополнить</button>
+      <button class="btn" id="mKey">Новый ключ доступа</button>
+      <button class="btn btn--primary" id="mApply">Применить</button>
+    </div>
+    <div class="modal__actions" style="margin-top:10px">
+      <button class="btn btn--danger" id="mBlock">${r.is_blocked ? "Разблокировать" : "Заблокировать"}</button>
+      <button class="btn btn--ghost" data-action="close">Закрыть</button>
     </div>`);
-  document.getElementById("tGo").addEventListener("click", async () => {
-    const amount = Math.round(Number(document.getElementById("tAmt").value));
-    if (!amount || amount <= 0) return toast("Введите сумму", "err");
+  document.getElementById("mApply").addEventListener("click", async () => {
     try {
-      const r = await api(`/admin/resellers/${id}/topup`, { method: "POST", body: { amount } });
-      closeModal(); toast(`Баланс: ${rub(r.new_balance)}`, "ok"); renderTab();
+      const level = Number(document.getElementById("mLevel").value);
+      if (level !== r.level) {
+        await api(`/admin/resellers/${r.id}/level`, { method: "POST", body: { level } });
+      }
+      const amt = Math.round(Number(document.getElementById("mAmt").value));
+      if (amt) {
+        await api(`/admin/resellers/${r.id}/balance`, {
+          method: "POST", body: { amount: amt, comment: "Корректировка из админки" },
+        });
+      }
+      closeModal(); toast("Сохранено", "ok"); renderTab();
     } catch (err) { toast(err.message, "err"); }
   });
+  document.getElementById("mBlock").addEventListener("click", async () => {
+    try {
+      await api(`/admin/resellers/${r.id}/block`, { method: "POST", body: { blocked: !r.is_blocked } });
+      closeModal(); toast(r.is_blocked ? "Разблокирован" : "Заблокирован", "ok"); renderTab();
+    } catch (err) { toast(err.message, "err"); }
+  });
+  document.getElementById("mKey").addEventListener("click", () => openIssueKeyModal(r.id));
 }
+
+// ── admin: dashboard ─────────────────────────────────────────────────────────
+async function viewAdminDashboard(view) {
+  const d = await api("/admin/dashboard");
+  view.innerHTML = `
+    <div class="grid grid--stats">
+      <div class="card stat"><div class="stat__label">Выручка</div>
+        <div class="stat__value accent">${rub(d.revenue_rub)}</div>
+        <div class="stat__sub">оплачено всего</div></div>
+      <div class="card stat"><div class="stat__label">Активные ключи</div>
+        <div class="stat__value">${d.active_subs}</div></div>
+      <div class="card stat"><div class="stat__label">Реселлеры</div>
+        <div class="stat__value">${d.resellers}</div></div>
+      <div class="card stat"><div class="stat__label">Клиенты</div>
+        <div class="stat__value">${d.clients}</div></div>
+      <div class="card stat"><div class="stat__label">Баланс реселлеров</div>
+        <div class="stat__value">${rub(d.reseller_balance_rub)}</div></div>
+    </div>
+    <div class="section-title"><h2>Последние платежи</h2></div>
+    <div class="rows">
+      ${(d.recent_payments || []).length ? d.recent_payments.map((p) => `<div class="row">
+        <div class="row__main"><div class="row__title">${esc(p.provider || "")} · ${esc(p.payload || "")}</div>
+          <div class="row__meta">${fmtDate(p.date)}</div></div>
+        <div class="amount-pos">+${rub(p.amount)}</div></div>`).join("")
+        : `<div class="empty">Платежей пока нет</div>`}
+    </div>`;
+}
+
+// ── admin: tariffs ───────────────────────────────────────────────────────────
+async function viewTariffs(view) {
+  const list = await api("/admin/tariffs");
+  view.innerHTML = `
+    <div class="section-title"><h2>Тарифы реселлеров</h2>
+      <button class="btn btn--primary btn--sm" data-action="add-tariff">+ Тариф</button></div>
+    <p class="muted" style="margin:0 2px 14px;font-size:13px">Цена = сколько списывается с баланса реселлера за ключ.</p>
+    <div class="rows">
+      ${list.length ? list.map((t) => `<div class="row">
+        <div class="row__main">
+          <div class="row__title">${esc(t.name)} ${t.is_active ? "" : '<span class="tag tag--disabled">выкл</span>'}</div>
+          <div class="row__meta">${rub(t.price_rub)} · ${t.duration_days} дн. · ${t.device_limit} устр. · ${t.traffic_limit_gb ? t.traffic_limit_gb + " ГБ" : "∞"}</div>
+        </div>
+        <div class="row__actions">
+          <button class="btn btn--sm" data-tariff-edit='${esc(JSON.stringify(t))}'>Изменить</button>
+        </div></div>`).join("") : `<div class="empty">Тарифов нет — создайте первый</div>`}
+    </div>`;
+}
+function openTariffModal(t) {
+  const e = t || { name: "", price_rub: 100, duration_days: 30, device_limit: 1, traffic_limit_gb: 0, is_active: true };
+  modal(`
+    <h3>${t ? "Изменить тариф" : "Новый тариф"}</h3>
+    <div class="field"><label>Название *</label><input class="input" id="tfName" value="${esc(e.name)}" placeholder="Start · 1 месяц" /></div>
+    <div class="field"><label>Цена реселлеру, ₽ *</label><input class="input" id="tfPrice" type="number" value="${e.price_rub}" /></div>
+    <div class="field"><label>Срок, дней *</label><input class="input" id="tfDays" type="number" value="${e.duration_days}" /></div>
+    <div class="field"><label>Устройств</label><input class="input" id="tfDev" type="number" value="${e.device_limit}" /></div>
+    <div class="field"><label>Трафик, ГБ (0 = безлимит)</label><input class="input" id="tfTraf" type="number" value="${e.traffic_limit_gb}" /></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="tfActive" ${e.is_active ? "checked" : ""}/> Активен</label></div>
+    <div class="modal__actions">
+      ${t ? `<button class="btn btn--danger" id="tfDel">Удалить</button>` : `<button class="btn btn--ghost" data-action="close">Отмена</button>`}
+      <button class="btn btn--primary" id="tfSave">Сохранить</button>
+    </div>`);
+  document.getElementById("tfSave").addEventListener("click", async () => {
+    const body = {
+      name: document.getElementById("tfName").value.trim(),
+      price_rub: Math.round(Number(document.getElementById("tfPrice").value)) || 0,
+      duration_days: Number(document.getElementById("tfDays").value) || 30,
+      device_limit: Number(document.getElementById("tfDev").value) || 1,
+      traffic_limit_gb: Number(document.getElementById("tfTraf").value) || 0,
+      is_active: document.getElementById("tfActive").checked,
+    };
+    if (!body.name) return toast("Укажите название", "err");
+    try {
+      if (t) await api(`/admin/tariffs/${t.id}`, { method: "PATCH", body });
+      else await api("/admin/tariffs", { method: "POST", body });
+      closeModal(); toast("Сохранено", "ok"); renderTab();
+    } catch (err) { toast(err.message, "err"); }
+  });
+  if (t) {
+    document.getElementById("tfDel").addEventListener("click", async () => {
+      if (!confirm("Удалить тариф?")) return;
+      try { await api(`/admin/tariffs/${t.id}`, { method: "DELETE" }); closeModal(); toast("Удалён", "ok"); renderTab(); }
+      catch (err) { toast(err.message, "err"); }
+    });
+  }
+}
+
+// ── admin: all keys ──────────────────────────────────────────────────────────
+async function viewAllKeys(view) {
+  const q = state.cache.keysQ || "";
+  const keys = await api(`/admin/keys?q=${encodeURIComponent(q)}`);
+  view.innerHTML = `
+    <div class="section-title"><h2>Все ключи</h2><span class="muted">${keys.length}</span></div>
+    <div class="field"><input class="input" id="keySearch" placeholder="Поиск по имени или Telegram ID" value="${esc(q)}" /></div>
+    <div class="rows">
+      ${keys.length ? keys.map((k) => {
+        const [label, cls] = SUB_STATUS[k.status] || [k.status, "pending"];
+        return `<div class="row">
+          <div class="row__main">
+            <div class="row__title">${esc(k.client || "—")} <span class="tag tag--${cls}">${label}</span></div>
+            <div class="row__meta">tg ${k.telegram_id ?? "—"} · до ${fmtDate(k.expires_at)}${k.reseller_id ? " · реселлер #" + k.reseller_id : ""}</div>
+          </div>
+          <div class="row__actions">
+            ${k.uuid && k.status === "active" ? `<button class="btn btn--sm btn--danger" data-key-disable="${esc(k.uuid)}">Отключить</button>` : ""}
+          </div></div>`;
+      }).join("") : `<div class="empty">Ключей нет</div>`}
+    </div>`;
+  const search = document.getElementById("keySearch");
+  search.addEventListener("change", () => { state.cache.keysQ = search.value.trim(); renderTab(); });
+}
+async function adminDisableKey(uuid) {
+  if (!confirm("Отключить ключ? Клиент потеряет доступ.")) return;
+  try { await api(`/admin/keys/${uuid}/disable`, { method: "POST" }); toast("Ключ отключён", "ok"); renderTab(); }
+  catch (err) { toast(err.message, "err"); }
+}
+
 async function openIssueKeyModal(id) {
   try {
     const r = await api(`/admin/resellers/${id}/key`, { method: "POST" });
@@ -405,17 +548,22 @@ async function openIssueKeyModal(id) {
 
 // ── delegation ─────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
-  const t = e.target.closest("[data-tab],[data-action],[data-buy],[data-client],[data-topup],[data-issuekey],[data-copy]");
+  const t = e.target.closest(
+    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-manage],[data-tariff-edit],[data-key-disable]"
+  );
   if (!t) return;
   if (t.dataset.tab) { state.tab = t.dataset.tab; renderShell(); return; }
   const a = t.dataset.action;
   if (a === "logout") { clearKey(); state.me = null; renderLogin(); return; }
   if (a === "close") return closeModal();
-  if (t.dataset.copy !== undefined && t.dataset.copy !== "") return copy(t.dataset.copy, "Ссылка скопирована");
+  if (a === "add-reseller") return openCreateResellerModal();
+  if (a === "add-tariff") return openTariffModal(null);
+  if (t.dataset.copy !== undefined && t.dataset.copy !== "") return copy(t.dataset.copy, "Скопировано");
   if (t.dataset.buy) return openBuyModal(JSON.parse(t.dataset.buy));
   if (t.dataset.client) return showClientModal(JSON.parse(t.dataset.client));
-  if (t.dataset.topup) return openTopupModal(Number(t.dataset.topup), t.dataset.name);
-  if (t.dataset.issuekey) return openIssueKeyModal(Number(t.dataset.issuekey));
+  if (t.dataset.manage) return openResellerManageModal(JSON.parse(t.dataset.manage));
+  if (t.dataset.tariffEdit) return openTariffModal(JSON.parse(t.dataset.tariffEdit));
+  if (t.dataset.keyDisable) return adminDisableKey(t.dataset.keyDisable);
 });
 
 // ── boot ───────────────────────────────────────────────────────────────────
