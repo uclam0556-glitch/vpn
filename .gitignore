@@ -35,3 +35,4 @@ dist/
 # Локальная копия серверного кода (для сверки, не для git)
 _server_snapshot/
 hamali_snapshot.tgz
+hamali_full_src.tgz
