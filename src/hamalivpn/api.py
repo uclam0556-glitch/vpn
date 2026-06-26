@@ -7,11 +7,13 @@ from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Header, Re
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from .db import get_session
 from .models import Customer, PaymentStatus, PaymentTransaction
 import json
+import secrets
 
 app = FastAPI(title="HamaliVPN TWA API")
 
@@ -90,19 +92,32 @@ async def get_portal_user(request: Request, credentials: HTTPAuthorizationCreden
         raise HTTPException(status_code=401, detail="Invalid access key")
     return {"id": customer.telegram_id}
 
+class SetKeyRequest(BaseModel):
+    key: str | None = None
+
+
 @app.post("/api/admin/resellers/{reseller_id}/key")
-async def generate_reseller_key(reseller_id: int, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+async def generate_reseller_key(reseller_id: int, req: SetKeyRequest = SetKeyRequest(), user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
     tg_id = user['id']
     customer = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
     if not customer or customer.role != "super_admin":
         raise HTTPException(403, "Not an admin")
-        
+
     reseller = await db.get(Customer, reseller_id)
     if not reseller:
         raise HTTPException(404, "Reseller not found")
-        
-    import secrets
-    new_key = secrets.token_urlsafe(32)
+
+    custom = (req.key or "").strip()
+    if custom:
+        if len(custom) < 6:
+            raise HTTPException(400, "Ключ слишком короткий (минимум 6 символов)")
+        clash = (await db.execute(select(Customer).filter_by(portal_access_key=custom))).scalars().first()
+        if clash and clash.id != reseller.id:
+            raise HTTPException(409, "Такой ключ уже используется другим пользователем")
+        new_key = custom
+    else:
+        new_key = secrets.token_urlsafe(32)
+
     reseller.portal_access_key = new_key
     await db.commit()
     return {"status": "ok", "portal_access_key": new_key}
@@ -425,7 +440,7 @@ async def get_all_resellers(user: dict = Depends(get_portal_user), db: AsyncSess
         raise HTTPException(403, "Not an admin")
         
     resellers = (await db.execute(select(Customer).filter(Customer.role.in_(["reseller", "super_admin"])))).scalars().all()
-    return [{"id": r.id, "telegram_id": r.telegram_id, "name": r.full_name, "balance": r.balance_rub, "level": r.reseller_level, "is_blocked": r.is_blocked} for r in resellers]
+    return [{"id": r.id, "telegram_id": r.telegram_id, "name": r.full_name, "balance": r.balance_rub, "level": r.reseller_level, "is_blocked": r.is_blocked, "portal_access_key": r.portal_access_key} for r in resellers]
 
 @app.post("/api/admin/resellers/{reseller_id}/topup")
 async def topup_reseller(reseller_id: int, req: AdminTopupRequest, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):

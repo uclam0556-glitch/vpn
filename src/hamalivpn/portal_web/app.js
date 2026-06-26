@@ -369,10 +369,24 @@ function resellerRow(r) {
 }
 
 function openResellerManageModal(r) {
+  const curKey = r.portal_access_key || "";
   modal(`
     <h3>${esc(r.name || "Реселлер")}</h3>
     <p class="sub">ID ${r.id} · tg ${r.telegram_id ?? "—"} · Баланс: <b>${rub(r.balance)}</b></p>
-    <div class="field"><label>Уровень</label>
+
+    <div class="field"><label>Текущий ключ доступа</label>
+      <div class="codebox">${esc(curKey || "не задан")}</div></div>
+    <div class="modal__actions">
+      ${curKey ? `<button class="btn" data-copy="${esc(curKey)}">Скопировать</button>` : ""}
+      <button class="btn" id="mGenKey">Случайный ключ</button>
+    </div>
+    <div class="field" style="margin-top:12px"><label>Задать свой ключ</label>
+      <input class="input" id="mCustomKey" placeholder="придумайте ключ (мин. 6 символов)" /></div>
+    <div class="modal__actions">
+      <button class="btn btn--primary" id="mSetKey">Сохранить ключ</button>
+    </div>
+
+    <div class="field" style="margin-top:16px"><label>Уровень</label>
       <select class="select" id="mLevel">
         <option value="1" ${r.level == 1 ? "selected" : ""}>Start</option>
         <option value="2" ${r.level == 2 ? "selected" : ""}>Partner</option>
@@ -381,13 +395,36 @@ function openResellerManageModal(r) {
     <div class="field"><label>Изменить баланс, ₽ (минус — списать)</label>
       <input class="input" id="mAmt" type="number" placeholder="напр. 5000 или -1000" /></div>
     <div class="modal__actions">
-      <button class="btn" id="mKey">Новый ключ доступа</button>
+      <button class="btn btn--danger" id="mBlock">${r.is_blocked ? "Разблокировать" : "Заблокировать"}</button>
       <button class="btn btn--primary" id="mApply">Применить</button>
     </div>
     <div class="modal__actions" style="margin-top:10px">
-      <button class="btn btn--danger" id="mBlock">${r.is_blocked ? "Разблокировать" : "Заблокировать"}</button>
       <button class="btn btn--ghost" data-action="close">Закрыть</button>
     </div>`);
+
+  async function applyKey(keyVal) {
+    try {
+      const res = await api(`/admin/resellers/${r.id}/key`, { method: "POST", body: { key: keyVal } });
+      renderTab();
+      modal(`
+        <h3>Ключ доступа обновлён</h3>
+        <p class="sub">${esc(r.name || "Реселлер")} — ключ для входа в портал:</p>
+        <div class="codebox">${esc(res.portal_access_key)}</div>
+        <div class="modal__actions">
+          <button class="btn btn--primary" data-copy="${esc(res.portal_access_key)}">Скопировать</button>
+          <button class="btn btn--ghost" data-action="close">Готово</button>
+        </div>`);
+    } catch (err) { toast(err.message, "err"); }
+  }
+  document.getElementById("mGenKey").addEventListener("click", () => {
+    if (!confirm("Сгенерировать новый случайный ключ? Старый перестанет работать.")) return;
+    applyKey(null);
+  });
+  document.getElementById("mSetKey").addEventListener("click", () => {
+    const k = document.getElementById("mCustomKey").value.trim();
+    if (k.length < 6) return toast("Ключ минимум 6 символов", "err");
+    applyKey(k);
+  });
   document.getElementById("mApply").addEventListener("click", async () => {
     try {
       const level = Number(document.getElementById("mLevel").value);
@@ -409,7 +446,6 @@ function openResellerManageModal(r) {
       closeModal(); toast(r.is_blocked ? "Разблокирован" : "Заблокирован", "ok"); renderTab();
     } catch (err) { toast(err.message, "err"); }
   });
-  document.getElementById("mKey").addEventListener("click", () => openIssueKeyModal(r.id));
 }
 
 // ── admin: dashboard ─────────────────────────────────────────────────────────
