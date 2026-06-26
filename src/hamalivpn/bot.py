@@ -12,6 +12,7 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    MenuButtonDefault,
     Message,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -661,6 +662,11 @@ async def main() -> None:
     if settings.auto_create_schema:
         await create_schema()
     bot = Bot(token=token)
+    # Убрать web-app кнопку «Личный кабинет» слева от поля ввода (menu button).
+    try:
+        await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+    except Exception:  # noqa: BLE001
+        logger.warning("Не удалось сбросить menu button", exc_info=True)
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     await bot.delete_webhook(drop_pending_updates=False)
