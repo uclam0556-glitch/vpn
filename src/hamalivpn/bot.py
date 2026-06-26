@@ -170,6 +170,9 @@ def home_keyboard() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="📘 Инструкция", callback_data="help:connect"),
         InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
     )
+    builder.row(
+        InlineKeyboardButton(text="📄 Документы", callback_data="docs:menu"),
+    )
     return builder.as_markup()
 
 
@@ -614,6 +617,127 @@ async def connection_help(callback: CallbackQuery) -> None:
         )
     else:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+# ── документы (Политика и Соглашение) ───────────────────────────────────────
+
+def docs_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🔒 Политика конфиденциальности", callback_data="docs:privacy")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📜 Пользовательское соглашение", callback_data="docs:terms")
+    )
+    builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    return builder.as_markup()
+
+
+def docs_back_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="← Документы", callback_data="docs:menu"))
+    builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    return builder.as_markup()
+
+
+def privacy_text() -> str:
+    return (
+        "🔒 <b>Политика конфиденциальности</b>\n"
+        "<i>HamaliVPN · редакция от 21.06.2026</i>\n\n"
+        "Политика регулирует сбор, использование и защиту информации пользователей сервиса. "
+        "Собираются идентификаторы аккаунта, техническая информация и история взаимодействий. "
+        "Данные используются для работы сервиса, связи с пользователем и анализа. Передача третьим "
+        "лицам возможна только в законодательно установленных случаях или с согласия пользователя. "
+        "Хранение — в течение необходимого срока, защита — в разумных пределах. Администрация вправе "
+        "вносить изменения без уведомления; согласие считается принятым при дальнейшем использовании.\n\n"
+        "<b>1. Общие положения</b>\n"
+        "1.1. Политика регулирует порядок обработки и защиты информации, передаваемой при использовании "
+        "сервиса (далее — «Сервис»).\n"
+        "1.2. Используя Сервис, Пользователь подтверждает согласие. При несогласии — обязан прекратить "
+        "использование.\n\n"
+        "<b>2. Сбор информации</b>\n"
+        "2.1. Сервис может собирать: идентификаторы аккаунта (логин, ID, никнейм); техническую информацию "
+        "(IP-адрес, браузер, устройство, ОС); историю взаимодействий.\n"
+        "2.2. Сервис не требует паспортных данных, документов, фотографий или иной личной информации сверх "
+        "минимально необходимой.\n\n"
+        "<b>3. Использование информации</b>\n"
+        "3.1. Только для: работы функционала; связи с Пользователем (уведомления и поддержка); анализа и "
+        "улучшения Сервиса.\n\n"
+        "<b>4. Передача третьим лицам</b>\n"
+        "4.1. Не передаётся, кроме случаев: требования закона; исполнения обязательств перед Пользователем "
+        "(например, платёжные системы); согласия Пользователя.\n\n"
+        "<b>5. Хранение и защита</b>\n"
+        "5.1. Данные хранятся в течение срока, необходимого для целей обработки.\n"
+        "5.2. Принимаются разумные меры защиты; абсолютная безопасность при передаче через интернет не "
+        "гарантируется.\n\n"
+        "<b>6. Отказ от ответственности</b>\n"
+        "6.1. Передача информации через интернет сопряжена с рисками.\n"
+        "6.2. Администрация не отвечает за утрату, кражу или раскрытие данных по вине третьих лиц или "
+        "самого Пользователя.\n\n"
+        "<b>7. Изменения</b>\n"
+        "7.1. Администрация вправе изменять Политику без предварительного уведомления.\n"
+        "7.2. Продолжение использования означает согласие с новой редакцией."
+    )
+
+
+def terms_text() -> str:
+    return (
+        "📜 <b>Пользовательское соглашение</b>\n"
+        "<i>HamaliVPN · редакция от 21.06.2026</i>\n\n"
+        "<b>1. Предмет</b>\n"
+        "1.1. Сервис предоставляет доступ к VPN для шифрования трафика и обеспечения приватности.\n"
+        "1.2. Используя Сервис, Пользователь принимает условия Соглашения.\n\n"
+        "<b>2. Условия использования</b>\n"
+        "2.1. Сервис предоставляется «как есть»; Пользователь использует его на свой риск.\n"
+        "2.2. Запрещено использовать Сервис для противоправных действий, спама, атак и иных нарушений "
+        "закона.\n"
+        "2.3. Оплаченный доступ предназначен для личного использования в пределах лимита устройств тарифа.\n\n"
+        "<b>3. Оплата и доступ</b>\n"
+        "3.1. Доступ предоставляется на срок выбранного тарифа после оплаты.\n"
+        "3.2. Стоимость и сроки указаны в боте на момент покупки.\n\n"
+        "<b>4. Возврат средств</b>\n"
+        "4.1. Доступ — цифровая услуга, предоставляется немедленно. Возврат возможен при технической "
+        "невозможности оказания услуги по вине Сервиса в течение 24 часов после оплаты.\n"
+        "4.2. По вопросам возврата — обратитесь в поддержку.\n\n"
+        "<b>5. Ответственность</b>\n"
+        "5.1. Сервис не отвечает за перебои из-за действий провайдеров, блокировок или форс-мажора.\n"
+        "5.2. Сервис не хранит логи пользовательского трафика.\n\n"
+        "<b>6. Изменения</b>\n"
+        "6.1. Администрация вправе изменять Соглашение; продолжение использования означает согласие."
+    )
+
+
+@router.callback_query(F.data == "docs:menu")
+async def docs_menu(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    text = "📄 <b>Правовая информация</b>\n\nПеред использованием сервиса ознакомьтесь с документами:"
+    kb = docs_menu_keyboard()
+    if callback.message.photo:
+        await callback.message.edit_caption(caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+    else:
+        await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+@router.callback_query(F.data == "docs:privacy")
+async def docs_privacy(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    await callback.message.answer(
+        privacy_text(), reply_markup=docs_back_keyboard(), parse_mode=ParseMode.HTML
+    )
+
+
+@router.callback_query(F.data == "docs:terms")
+async def docs_terms(callback: CallbackQuery) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    await callback.message.answer(
+        terms_text(), reply_markup=docs_back_keyboard(), parse_mode=ParseMode.HTML
+    )
 
 
 async def main() -> None:
