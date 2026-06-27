@@ -9,6 +9,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     CallbackQuery,
+    BotCommand,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -127,14 +128,15 @@ def info_text() -> str:
 
 def help_text() -> str:
     return (
-        "📘 <b>Как подключиться</b>\n\n"
+        "📘 <b>Помощь и подключение</b>\n\n"
         "<b>1.</b> Установите приложение:\n"
         "   • iPhone — Streisand\n"
         "   • Android — v2RayTun\n"
         "   • Windows / macOS — Hiddify\n\n"
         "<b>2.</b> Откройте «Моя подписка» → «Подключить устройство».\n\n"
         "<b>3.</b> Выберите приложение — профиль добавится автоматически.\n\n"
-        "Скачать приложения 👇"
+        "Если что-то не подключается — напишите в поддержку, мы быстро поможем.\n\n"
+        "Скачать приложения или открыть поддержку 👇"
     )
 
 
@@ -207,6 +209,7 @@ def help_keyboard() -> InlineKeyboardMarkup:
             url="https://hiddify.com/",
         )
     )
+    builder.row(InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url()))
     builder.row(
         InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
         InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"),
@@ -299,6 +302,11 @@ async def show_id(message: Message) -> None:
             f"🔑 Ваш Telegram ID: <code>{message.from_user.id}</code>",
             parse_mode="HTML",
         )
+
+
+@router.message(Command("help"))
+async def show_help(message: Message) -> None:
+    await message.answer(help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(F.data == "menu:home")
@@ -667,6 +675,15 @@ async def main() -> None:
         await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось сбросить menu button", exc_info=True)
+    try:
+        await bot.set_my_commands(
+            [
+                BotCommand(command="start", description="Открыть HamaliVpn"),
+                BotCommand(command="help", description="Помощь и поддержка"),
+            ]
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("Не удалось обновить команды бота", exc_info=True)
     dispatcher = Dispatcher()
     dispatcher.include_router(router)
     await bot.delete_webhook(drop_pending_updates=False)
