@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     subscription_health_interval_seconds: int = 300
     subscription_health_batch_size: int = 25
     subscription_probe_user_agent: str = "Happ/4.11.0/ios/2606031844510"
+    premium_emoji_json: str = ""
+    hysteria_legacy_password: SecretStr = SecretStr("")
+    hysteria_legacy_nodes: str = "67.159.56.63,85.137.249.225,103.112.69.188,45.92.218.178,92.119.166.192"
 
     @property
     def admin_ids(self) -> set[int]:
@@ -63,6 +66,10 @@ class Settings(BaseSettings):
     @property
     def squad_uuids(self) -> list[str]:
         return [item.strip() for item in self.remnawave_internal_squads.split(",") if item.strip()]
+
+    @property
+    def hysteria_legacy_node_set(self) -> set[str]:
+        return {item.strip() for item in self.hysteria_legacy_nodes.split(",") if item.strip()}
 
     @property
     def is_production(self) -> bool:

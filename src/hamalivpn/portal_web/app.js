@@ -26,6 +26,11 @@ async function api(path, { method = "GET", body } = {}) {
   }
   let data = null;
   try { data = await res.json(); } catch { /* no body */ }
+  if (res.status === 403 && String(data?.detail || "").toLowerCase().includes("заблок")) {
+    clearKey();
+    renderLogin(data.detail || "Доступ заблокирован");
+    throw new Error("unauthorized");
+  }
   if (!res.ok) {
     const d = data && (data.detail || data.message);
     throw new Error(typeof d === "string" ? d : `Ошибка ${res.status}`);
@@ -54,6 +59,12 @@ function fmtDate(iso) {
 function daysLeft(iso) {
   if (!iso) return null;
   return Math.ceil((new Date(iso) - new Date()) / 86400000);
+}
+function fmtDateTime(iso) {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d) ? "—"
+    : d.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
 const SUB_STATUS = {
@@ -122,7 +133,7 @@ function renderLogin(error = "") {
 // ── shell ────────────────────────────────────────────────────────────────
 function tabsFor(role) {
   if (role === "super_admin") {
-    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["tariffs", "Тарифы"], ["allkeys", "Ключи"]];
+    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["tariffs", "Тарифы"], ["allkeys", "Ключи"], ["audit", "Аудит"]];
   }
   return [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
 }
@@ -157,7 +168,7 @@ async function renderTab() {
   const view = document.getElementById("view");
   const map = {
     dashboard: viewDashboard, buy: viewBuy, clients: viewClients, resellers: viewResellers,
-    admin: viewAdminDashboard, tariffs: viewTariffs, allkeys: viewAllKeys,
+    admin: viewAdminDashboard, tariffs: viewTariffs, allkeys: viewAllKeys, audit: viewAudit,
   };
   try { await (map[state.tab] || (() => {}))(view); }
   catch (err) { if (err.message !== "unauthorized") view.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
@@ -260,12 +271,33 @@ function showSubModal(url) {
 // ── clients (= keys) ───────────────────────────────────────────────────────
 async function viewClients(view) {
   const clients = await api("/reseller/clients");
+  const q = (state.cache.clientQ || "").toLowerCase();
+  const visible = q
+    ? clients.filter((c) =>
+        `${c.name || ""} ${c.telegram_id || ""}`.toLowerCase().includes(q)
+      )
+    : clients;
+  const active = clients.filter((c) => c.sub_status === "active").length;
+  const expiring = clients.filter((c) => {
+    const d = daysLeft(c.expires_at);
+    return c.sub_status === "active" && d !== null && d >= 0 && d <= 5;
+  }).length;
+  const disabled = clients.length - active;
   view.innerHTML = `
-    <div class="section-title"><h2>Клиенты и ключи</h2><span class="muted">${clients.length}</span></div>
+    <div class="grid grid--stats">
+      <div class="card stat"><div class="stat__label">Всего клиентов</div><div class="stat__value">${clients.length}</div></div>
+      <div class="card stat"><div class="stat__label">Активные</div><div class="stat__value accent">${active}</div></div>
+      <div class="card stat"><div class="stat__label">Истекают до 5 дней</div><div class="stat__value">${expiring}</div></div>
+      <div class="card stat"><div class="stat__label">Отключены / истекли</div><div class="stat__value">${disabled}</div></div>
+    </div>
+    <div class="section-title"><h2>Клиенты и ключи</h2><span class="muted">${visible.length}</span></div>
+    <div class="field"><input class="input" id="clientSearch" placeholder="Поиск по имени или Telegram ID" value="${esc(state.cache.clientQ || "")}" /></div>
     <div class="rows">
-      ${clients.length ? clients.map(clientRow).join("")
+      ${visible.length ? visible.map(clientRow).join("")
         : `<div class="empty">Пока пусто — создайте ключ на вкладке «Купить»</div>`}
     </div>`;
+  const search = document.getElementById("clientSearch");
+  search.addEventListener("change", () => { state.cache.clientQ = search.value.trim(); renderTab(); });
 }
 function clientRow(c) {
   const [label, cls] = SUB_STATUS[c.sub_status] || [c.sub_status, "pending"];
@@ -277,25 +309,32 @@ function clientRow(c) {
       <div class="row__meta">до ${fmtDate(c.expires_at)} ${left ? "· " + left : ""} · 📱 ${c.device_limit}</div>
     </div>
     <div class="row__actions">
+      ${c.connect_url ? `<button class="btn btn--sm" data-copy="${esc(c.connect_url)}">Ссылка</button>` : ""}
       <button class="btn btn--sm" data-client='${esc(JSON.stringify(c))}'>Открыть</button>
     </div>
   </div>`;
 }
 function showClientModal(c) {
   const url = c.connect_url || c.sub_url || "";
-  modal(`
+  const back = modal(`
     <h3>${esc(c.name || "Клиент")}</h3>
-    <p class="sub">${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)}</p>
+    <p class="sub">${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)} · ${c.device_limit || 0} устр.</p>
     <div class="field"><label>Ссылка для клиента</label><div class="codebox">${esc(url || "—")}</div></div>
     <div class="modal__actions">
       <button class="btn btn--primary" data-copy="${esc(url)}">Скопировать</button>
       ${url ? `<button class="btn" data-openurl="${esc(url)}">Открыть</button>` : ""}
     </div>
     <div class="modal__actions" style="margin-top:10px">
+      <button class="btn" id="renewClient">Продлить</button>
+      <button class="btn" id="devicesClient">Устройства</button>
       <button class="btn btn--danger" id="revoke">Отозвать ключ</button>
+    </div>
+    <div class="modal__actions" style="margin-top:10px">
       <button class="btn btn--ghost" data-action="close">Закрыть</button>
     </div>`);
   const uuid = c.remnawave_uuid;
+  back.querySelector("#renewClient").addEventListener("click", () => openRenewModal(c));
+  back.querySelector("#devicesClient").addEventListener("click", () => openDevicesModal(c));
   document.getElementById("revoke").addEventListener("click", async () => {
     if (!uuid) return toast("Нет ключа", "err");
     if (!confirm("Отозвать ключ? Клиент потеряет доступ.")) return;
@@ -304,6 +343,117 @@ function showClientModal(c) {
       toast("Ключ отозван", "ok"); closeModal(); renderTab();
     } catch (err) { toast(err.message, "err"); }
   });
+}
+
+async function openRenewModal(c) {
+  const uuid = c.remnawave_uuid;
+  if (!uuid) return toast("Нет ключа для продления", "err");
+  const tariffs = await api("/reseller/tariffs");
+  const opts = tariffs.map((t) =>
+    `<option value="${t.id}">${esc(t.name)} · ${rub(t.price_rub)} · ${t.duration_days} дн. · ${t.device_limit} устр.</option>`
+  ).join("");
+  modal(`
+    <h3>Продлить клиента</h3>
+    <p class="sub">${esc(c.name || "Клиент")} · текущая дата: ${fmtDate(c.expires_at)}. Списание будет с баланса реселлера.</p>
+    <div class="field"><label>Тариф продления</label><select class="select" id="renewTariff">${opts}</select></div>
+    <div class="modal__actions">
+      <button class="btn btn--ghost" data-action="close">Отмена</button>
+      <button class="btn btn--primary" id="renewConfirm">Продлить и списать</button>
+    </div>`);
+  document.getElementById("renewConfirm").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Продлеваем…";
+    try {
+      const r = await api(`/reseller/clients/${uuid}/renew`, {
+        method: "POST",
+        body: { tariff_id: Number(document.getElementById("renewTariff").value) },
+      });
+      state.cache.balance = r.balance;
+      toast(`Продлено до ${fmtDate(r.expires_at)}`, "ok");
+      closeModal();
+      renderTab();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = "Продлить и списать";
+      toast(err.message, "err");
+    }
+  });
+}
+
+function deviceRow(d, uuid) {
+  const hwid = d.hwid || d.HWID || d.deviceId || d.id || "";
+  const title = [d.deviceModel, d.platform, d.os, d.model].filter(Boolean).join(" · ") || hwid || "Устройство";
+  const appName = (d.userAgent || "").split("/")[0] || "";
+  const meta = [appName, d.osVersion, d.updatedAt ? fmtDateTime(d.updatedAt) : "", hwid].filter(Boolean).join(" · ");
+  return `<div class="row">
+    <div class="row__main">
+      <div class="row__title">${esc(title)}</div>
+      <div class="row__meta">${esc(meta)}</div>
+    </div>
+    <div class="row__actions">
+      ${hwid ? `<button class="btn btn--sm btn--danger" data-devdel='${esc(JSON.stringify({ uuid, hwid }))}'>Отключить</button>` : ""}
+    </div>
+  </div>`;
+}
+
+async function renderDeviceManager(uuid) {
+  const box = document.getElementById("devBox");
+  if (!box) return;
+  box.innerHTML = `<div class="empty">Загрузка устройств…</div>`;
+  try {
+    const d = await api(`/reseller/clients/${uuid}/devices`);
+    const over = Number(d.count || 0) > Number(d.device_limit || 0);
+    box.innerHTML = `
+      <div class="field"><label>Лимит устройств</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn--sm" id="devMinus" type="button">−</button>
+          <input class="input" id="devLimit" type="number" min="1" max="10" value="${d.device_limit || 1}" style="max-width:90px;text-align:center" />
+          <button class="btn btn--sm" id="devPlus" type="button">＋</button>
+          <button class="btn btn--sm btn--primary" id="devSave" type="button">Сохранить</button>
+        </div>
+      </div>
+      <div class="section-title" style="margin:10px 0 6px">
+        <h2 style="font-size:15px">Устройства <span class="muted">${d.count || 0}/${d.device_limit || 0}</span></h2></div>
+      <div class="rows">
+        ${(d.devices || []).length ? d.devices.map((x) => deviceRow(x, uuid)).join("")
+          : `<div class="empty">Активных устройств нет.<br><span class="muted" style="font-size:12px">Hysteria/LTE подключения могут не отображаться как HWID. Основной лимит устройств контролируется через VLESS/Remnawave.</span></div>`}
+      </div>
+      ${over ? `<p class="hint" style="color:var(--danger);margin-top:8px">Устройств больше лимита — отключите лишние вручную.</p>` : ""}`;
+    const inp = document.getElementById("devLimit");
+    document.getElementById("devMinus").addEventListener("click", () => { inp.value = Math.max(1, (Number(inp.value) || 1) - 1); });
+    document.getElementById("devPlus").addEventListener("click", () => { inp.value = Math.min(10, (Number(inp.value) || 1) + 1); });
+    document.getElementById("devSave").addEventListener("click", async () => {
+      const v = Math.max(1, Math.min(10, Number(inp.value) || 1));
+      try {
+        await api(`/reseller/clients/${uuid}`, { method: "PUT", body: { devices_limit: v } });
+        toast("Лимит сохранён", "ok");
+        renderDeviceManager(uuid);
+      } catch (err) { toast(err.message, "err"); }
+    });
+  } catch (err) { box.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+}
+
+async function disconnectDevice(uuid, hwid) {
+  if (!confirm("Отключить это устройство? Слот освободится, устройство потеряет доступ при следующем подключении.")) return;
+  try {
+    await api(`/reseller/clients/${uuid}/devices/delete`, { method: "POST", body: { hwid } });
+    toast("Устройство отключено", "ok");
+    renderDeviceManager(uuid);
+  } catch (err) { toast(err.message, "err"); }
+}
+
+function openDevicesModal(c) {
+  const uuid = c.remnawave_uuid;
+  if (!uuid) return toast("Нет ключа", "err");
+  modal(`
+    <h3>${esc(c.name || "Клиент")}</h3>
+    <p class="sub">Лимит и подключённые устройства</p>
+    <div id="devBox"><div class="empty">Загрузка…</div></div>
+    <div class="modal__actions" style="margin-top:10px">
+      <button class="btn btn--ghost" data-action="close">Закрыть</button>
+    </div>`);
+  renderDeviceManager(uuid);
 }
 
 // ── admin: resellers ───────────────────────────────────────────────────────
@@ -616,10 +766,35 @@ async function openIssueKeyModal(id) {
   } catch (err) { toast(err.message, "err"); }
 }
 
+// ── admin: audit ─────────────────────────────────────────────────────────────
+async function viewAudit(view) {
+  const rows = await api("/admin/audit");
+  view.innerHTML = `
+    <div class="section-title"><h2>Журнал действий</h2><span class="muted">${rows.length}</span></div>
+    <p class="muted" style="margin:0 2px 14px;font-size:13px">Финансы, ключи, продления, блокировки и изменения тарифов — без секретов и токенов.</p>
+    <div class="rows">
+      ${rows.length ? rows.map(auditRow).join("") : `<div class="empty">Аудит пока пуст</div>`}
+    </div>`;
+}
+
+function auditRow(a) {
+  const d = a.details || {};
+  const detail = Object.entries(d).slice(0, 6).map(([k, v]) => {
+    const value = typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
+    return `${k}: ${value}`;
+  }).join(" · ");
+  return `<div class="row">
+    <div class="row__main">
+      <div class="row__title">${esc(a.action)} <span class="tag tag--pending">${esc(a.entity_type || "")}</span></div>
+      <div class="row__meta">${fmtDate(a.created_at)} · ${esc(a.actor || "")}${detail ? " · " + esc(detail) : ""}</div>
+    </div>
+  </div>`;
+}
+
 // ── delegation ─────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
   const t = e.target.closest(
-    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-openurl],[data-manage],[data-tariff-edit],[data-key-disable]"
+    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-openurl],[data-manage],[data-tariff-edit],[data-key-disable],[data-devdel]"
   );
   if (!t) return;
   if (t.dataset.openurl) return window.open(t.dataset.openurl, "_blank");
@@ -636,6 +811,7 @@ document.addEventListener("click", (e) => {
   if (t.dataset.manage) return openResellerManageModal(JSON.parse(t.dataset.manage));
   if (t.dataset.tariffEdit) return openTariffModal(JSON.parse(t.dataset.tariffEdit));
   if (t.dataset.keyDisable) return adminDisableKey(t.dataset.keyDisable);
+  if (t.dataset.devdel) { const o = JSON.parse(t.dataset.devdel); return disconnectDevice(o.uuid, o.hwid); }
 });
 
 // ── boot ───────────────────────────────────────────────────────────────────

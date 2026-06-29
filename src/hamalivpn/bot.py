@@ -1,10 +1,13 @@
 import asyncio
 import html
+import json
 import logging
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Awaitable, Callable
 
-from aiogram import Bot, Dispatcher, F, Router
+from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
@@ -23,6 +26,7 @@ from . import payments, referrals
 from .config import get_settings
 from .db import SessionFactory, create_schema
 from .models import Customer, Subscription, SubscriptionStatus, as_utc
+from .premium_emoji import ce, collect_custom_emojis
 from .remnawave import RemnawaveError, make_remnawave_gateway
 from .services import (
     CustomerBlockedError,
@@ -42,14 +46,68 @@ router.include_router(payments.router)
 router.include_router(referrals.router)
 
 BANNER = Path(__file__).resolve().parent / "static" / "banner.png"
+PREMIUM_EMOJI_KEYS = [
+    "brand",
+    "speed",
+    "support",
+    "connect",
+    "active",
+    "calendar",
+    "gift",
+    "card",
+    "user",
+    "star",
+    "book",
+    "diamond",
+    "chat",
+    "doc",
+    "phone",
+    "refresh",
+    "shield",
+    "lightning",
+    "rocket",
+    "money",
+    "bank",
+    "home",
+    "sparkles",
+]
+_premium_emoji_capture: dict[int, list[dict[str, str]]] = {}
 
-# Premium Emojis tags (fallback to unicode since custom emojis require specific valid document IDs)
-EMOJI_SHIELD = '🛡'
-EMOJI_LIGHTNING = '⚡️'
-EMOJI_STAR = '⭐️'
-EMOJI_DIAMOND = '💎'
-EMOJI_ROCKET = '🚀'
-EMOJI_GIFT = '🎁'
+
+class TapThrottleMiddleware(BaseMiddleware):
+    """Small in-memory guard against double taps and command spam.
+
+    It does not replace DB-level idempotency; it only makes the bot feel calmer
+    and prevents accidental double-clicks on expensive actions such as trial
+    provisioning or key rotation.
+    """
+
+    def __init__(self, interval_seconds: float = 0.85) -> None:
+        self.interval_seconds = interval_seconds
+        self._last_seen: dict[int, float] = {}
+
+    async def __call__(
+        self,
+        handler: Callable[[Any, dict[str, Any]], Awaitable[Any]],
+        event: Any,
+        data: dict[str, Any],
+    ) -> Any:
+        user = getattr(event, "from_user", None)
+        if user is None:
+            return await handler(event, data)
+
+        if isinstance(event, Message) and collect_custom_emojis(event):
+            return await handler(event, data)
+
+        now = time.monotonic()
+        last = self._last_seen.get(user.id, 0.0)
+        if now - last < self.interval_seconds:
+            if isinstance(event, CallbackQuery):
+                await event.answer("Секунду…", show_alert=False)
+            return None
+
+        self._last_seen[user.id] = now
+        return await handler(event, data)
 
 def support_url() -> str:
     return f"https://t.me/{settings.support_username.lstrip('@')}"
@@ -59,93 +117,94 @@ def support_url() -> str:
 
 def welcome_text(name: str) -> str:
     return (
-        f"👋 <b>{name}</b>, добро пожаловать в <b>HamaliVPN</b>\n\n"
-        "Премиальный VPN для свободного интернета — быстрый, приватный, стабильный.\n\n"
-        "⚡️  Скорость без ограничений\n"
-        "🛡  Шифрование и полная приватность\n"
-        "🌍  Серверы Европы — открыт весь мир\n"
-        "📱  До 5 устройств на одной подписке\n\n"
-        "Начните с пробного доступа или оформите подписку 👇"
+        f"{ce('brand')} <b>{name}</b>, добро пожаловать в <b>HamaliVPN</b>\n\n"
+        "Премиальный доступ к свободному интернету — быстро, стабильно и без сложных настроек.\n\n"
+        f"{ce('speed')} <b>Быстро</b> — оптимизированная сеть Европы\n"
+        f"{ce('shield')} <b>Надёжно</b> — несколько протоколов и резервные направления\n"
+        f"{ce('connect')} <b>Просто</b> — подключение в 1–2 клика\n"
+        f"{ce('support')} <b>Рядом</b> — поддержка, если что-то не открывается\n\n"
+        "Выберите действие ниже 👇"
     )
 
 
-def subscription_text(subscription: Subscription, health: str) -> str:
+def subscription_text(subscription: Subscription) -> str:
     status_map = {
-        SubscriptionStatus.active: "🟢 Активна",
-        SubscriptionStatus.expired: "🔴 Истекла",
-        SubscriptionStatus.pending: "🟡 Инициализируется",
+        SubscriptionStatus.active: f"{ce('active')} Активна",
+        SubscriptionStatus.expired: f"{ce('red')} Истекла",
+        SubscriptionStatus.pending: f"{ce('yellow')} Инициализируется",
     }
-    status = status_map.get(subscription.status, "⚪️ Неизвестно")
+    status = status_map.get(subscription.status, f"{ce('white')} Неизвестно")
 
     expires = "∞ Бессрочно"
     if subscription.expires_at:
         delta = as_utc(subscription.expires_at) - datetime.now(UTC)
         days = delta.days
         if days < 0:
-            expires = "🔴 Истекла"
+            expires = f"{ce('red')} Истекла"
         elif days == 0:
-            expires = "⚠️ Истекает сегодня"
+            expires = f"{ce('warning')} Истекает сегодня"
         else:
-            expires = f"📅 {days} дн."
+            expires = f"{ce('calendar')} {days} дн."
+
+    date_line = ""
+    if subscription.expires_at:
+        date_line = (
+            f"\n{ce('calendar')} Дата окончания — "
+            f"{as_utc(subscription.expires_at).strftime('%d.%m.%Y')}"
+        )
 
     return (
-        "👤 <b>Моя подписка</b>\n\n"
+        f"{ce('user')} <b>Моя подписка</b>\n\n"
         f"Статус — {status}\n"
-        f"Действует — {expires}\n"
-        f"Серверы — {health}\n"
-        f"Устройств — {subscription.device_limit}\n\n"
-        "Нажмите «Подключить устройство» — приложение настроится автоматически."
+        f"Осталось — {expires}{date_line}\n"
+        f"Лимит устройств — {subscription.device_limit}\n\n"
+        f"Нажмите <b>«{ce('connect')} Подключить устройство»</b> — откроется страница быстрой настройки."
     )
 
 
-def trial_success_text(traffic_label: str, device_limit: int, health: str) -> str:
+def trial_success_text(traffic_label: str, device_limit: int) -> str:
     return (
-        "✅ <b>Доступ активирован</b>\n\n"
+        f"{ce('check')} <b>Пробный доступ активирован</b>\n\n"
         f"Трафик — {traffic_label}\n"
-        f"Устройств — {device_limit}\n"
-        f"Серверы — {health}\n\n"
-        "Нажмите <b>«📲 Подключить устройство»</b> — настройка пройдёт автоматически."
+        f"Лимит устройств — {device_limit}\n\n"
+        f"Теперь нажмите <b>«{ce('connect')} Подключить устройство»</b> и импортируйте профиль в приложение."
     )
 
 
 def info_text() -> str:
     return (
-        "💎 <b>Почему HamaliVPN?</b>\n\n"
-        "⚡️ <b>Скорость</b>\n"
-        "   Серверы в Европе с пингом &lt;20 мс\n\n"
-        "🛡 <b>Протокол VLESS + REALITY</b>\n"
-        "   Невидим для блокировок и DPI\n\n"
-        "🔒 <b>Нулевые логи</b>\n"
-        "   Мы не храним ни байта твоего трафика\n\n"
-        "🔄 <b>Авто-балансировка</b>\n"
-        "   Приложение само выбирает быстрый сервер\n\n"
-        "📱 <b>Все платформы</b>\n"
-        "   iOS, Android, Windows, macOS, Linux\n\n"
+        f"{ce('diamond')} <b>HamaliVPN — коротко</b>\n\n"
+        f"{ce('speed')} <b>Скорость</b>\n"
+        "   Подбираем локации под мобильные сети и стабильный отклик.\n\n"
+        f"{ce('shield')} <b>Устойчивость</b>\n"
+        "   VLESS Reality + быстрые LTE/Hysteria направления как резерв.\n\n"
+        f"{ce('connect')} <b>Удобство</b>\n"
+        "   Подключение через готовую ссылку без ручной настройки.\n\n"
+        f"{ce('refresh')} <b>Запас</b>\n"
+        "   Несколько резервных направлений внутри одной подписки.\n\n"
+        "📱 <b>Платформы</b>\n"
+        "   iPhone, Android, Windows, macOS.\n\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💬 Поддержка: {support_url()}"
+        f"{ce('support')} Поддержка: {support_url()}"
     )
 
 
 def help_text() -> str:
     return (
-        "📘 <b>Помощь и подключение</b>\n\n"
-        "<b>1.</b> Установите приложение:\n"
-        "   • iPhone — Streisand\n"
-        "   • Android — v2RayTun\n"
-        "   • Windows / macOS — Hiddify\n\n"
-        "<b>2.</b> Откройте «Моя подписка» → «Подключить устройство».\n\n"
-        "<b>3.</b> Выберите приложение — профиль добавится автоматически.\n\n"
-        "Если что-то не подключается — напишите в поддержку, мы быстро поможем.\n\n"
-        "Скачать приложения или открыть поддержку 👇"
+        f"{ce('connect')} <b>Подключение HamaliVPN</b>\n\n"
+        "<b>1.</b> Установите подходящее приложение для VPN на своё устройство.\n"
+        "Если не знаете какое выбрать — напишите в поддержку, подскажем быстро.\n\n"
+        f"<b>2.</b> Нажмите «👤 Моя подписка» → «{ce('connect')} Подключить устройство».\n\n"
+        "<b>3.</b> Откройте ссылку в приложении и включите VPN.\n\n"
+        "Если приложение не импортирует профиль или интернет не открывается — напишите в поддержку.\n\n"
+        "Нужные кнопки ниже 👇"
     )
 
 
-def refresh_success_text(endpoint_count: int, response_ms: int, endpoint_names: str) -> str:
+def refresh_success_text(response_ms: int) -> str:
     return (
-        "🔄 <b>Серверы обновлены</b>\n\n"
-        f"Доступно серверов — {endpoint_count}\n"
+        f"{ce('check')} <b>Профиль подключения обновлён</b>\n\n"
         f"Отклик панели — {response_ms} мс\n\n"
-        f"{endpoint_names}\n\n"
         "Если приложение открыто — обновите подписку внутри него."
     )
 
@@ -164,9 +223,10 @@ def home_keyboard() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="📘 Инструкция", callback_data="help:connect"),
-        InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
+        InlineKeyboardButton(text="💎 О сервисе", callback_data="info:show"),
     )
     builder.row(
+        InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
         InlineKeyboardButton(text="📄 Документы", callback_data="docs:menu"),
     )
     return builder.as_markup()
@@ -181,7 +241,6 @@ def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        InlineKeyboardButton(text="🔄 Обновить серверы", callback_data="subscription:refresh"),
         InlineKeyboardButton(text="🔁 Новая ссылка", callback_data="subscription:rotate"),
     )
     builder.row(
@@ -193,22 +252,6 @@ def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
 
 def help_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(
-            text="🍎 Streisand (iPhone)",
-            url="https://apps.apple.com/app/streisand/id6450534064",
-        ),
-        InlineKeyboardButton(
-            text="🤖 v2RayTun (Android)",
-            url="https://play.google.com/store/apps/details?id=com.v2raytun.android",
-        ),
-    )
-    builder.row(
-        InlineKeyboardButton(
-            text="💻 Hiddify (PC/Mac)",
-            url="https://hiddify.com/",
-        )
-    )
     builder.row(InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url()))
     builder.row(
         InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
@@ -222,20 +265,6 @@ def back_keyboard() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
     builder.row(InlineKeyboardButton(text="💬 Поддержка", url=support_url()))
     return builder.as_markup()
-
-
-def health_summary(subscription: Subscription) -> str:
-    labels = {
-        "healthy": "🟢 Готова",
-        "degraded": "🟡 Нестабильна",
-        "empty": "⚪️ Ещё не выданы",
-        "unreachable": "🔴 Недоступна",
-        "unknown": "⏳ Проверяется",
-    }
-    label = labels.get(subscription.health_status, subscription.health_status)
-    if subscription.health_endpoint_count:
-        label += f"  ({subscription.health_endpoint_count} сервера)"
-    return label
 
 
 # ── хендлеры ───────────────────────────────────────────────────────────────
@@ -299,14 +328,99 @@ async def start(message: Message, command: CommandObject) -> None:
 async def show_id(message: Message) -> None:
     if message.from_user:
         await message.answer(
-            f"🔑 Ваш Telegram ID: <code>{message.from_user.id}</code>",
+            f"{ce('key')} Ваш Telegram ID: <code>{message.from_user.id}</code>",
             parse_mode="HTML",
         )
+
+
+@router.message(Command("emoji"))
+async def premium_emoji_help(message: Message) -> None:
+    if message.from_user is None or message.from_user.id not in settings.admin_ids:
+        await message.answer(help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML)
+        return
+    _premium_emoji_capture[message.from_user.id] = []
+    await message.answer(
+        f"{ce('sparkles')} <b>Премиум-иконки HamaliVPN</b>\n\n"
+        "Сбор начат заново. Отправляйте красивые Telegram Premium emoji — можно пачкой или отдельными сообщениями.\n"
+        "Я буду собирать их по порядку и давать готовую строку для настройки.\n\n"
+        "Лучший порядок для текущего дизайна:\n"
+        f"<code>{' '.join(PREMIUM_EMOJI_KEYS)}</code>",
+        parse_mode=ParseMode.HTML,
+    )
+
+
+@router.message(lambda message: bool(collect_custom_emojis(message)))
+async def collect_premium_emoji_ids(message: Message) -> None:
+    if message.from_user is None or message.from_user.id not in settings.admin_ids:
+        return
+
+    items = collect_custom_emojis(message)
+    if not items:
+        return
+
+    captured = _premium_emoji_capture.setdefault(message.from_user.id, [])
+    known_ids = {item["custom_emoji_id"] for item in captured}
+    added = 0
+    for item in items:
+        if item["custom_emoji_id"] in known_ids:
+            continue
+        captured.append(item)
+        known_ids.add(item["custom_emoji_id"])
+        added += 1
+
+    suggested = {
+        key: item["custom_emoji_id"]
+        for key, item in zip(PREMIUM_EMOJI_KEYS, captured, strict=False)
+    }
+    rows = [
+        f"{index}. <code>{PREMIUM_EMOJI_KEYS[index - 1] if index <= len(PREMIUM_EMOJI_KEYS) else 'extra'}</code> "
+        f"{html.escape(item['fallback'] or 'emoji')} — <code>{item['custom_emoji_id']}</code>"
+        for index, item in enumerate(captured, start=1)
+    ]
+    env_line = "PREMIUM_EMOJI_JSON=" + json.dumps(suggested, ensure_ascii=False)
+    await message.answer(
+        f"{ce('sparkles')} <b>Поймал premium emoji</b>\n"
+        f"Новых: <b>{added}</b> · всего: <b>{len(captured)}</b> из <b>{len(PREMIUM_EMOJI_KEYS)}</b>\n\n"
+        + "\n".join(rows)
+        + "\n\n"
+        "Готовая строка для <code>.env</code>:\n"
+        f"<code>{html.escape(env_line)}</code>\n\n"
+        "Когда список будет полный, напишите мне — я применю её и перезапущу бота.",
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.message(Command("help"))
 async def show_help(message: Message) -> None:
     await message.answer(help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML)
+
+
+@router.message(Command("status"))
+async def show_status(message: Message) -> None:
+    if message.from_user is None:
+        return
+    async with SessionFactory() as session:
+        subscription = await get_latest_subscription(session, message.from_user.id)
+        if subscription is not None:
+            await record_subscription_health(
+                session,
+                subscription,
+                settings,
+                actor=f"telegram:{message.from_user.id}",
+            )
+    if subscription is None:
+        await message.answer(
+            f"{ce('user')} <b>Подписка не найдена</b>\n\n"
+            "Активируйте пробный доступ или оформите подписку.",
+            reply_markup=home_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+    await message.answer(
+        subscription_text(subscription),
+        reply_markup=subscription_keyboard(subscription),
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.callback_query(F.data == "menu:home")
@@ -399,7 +513,7 @@ async def create_trial(callback: CallbackQuery) -> None:
         return
     except RemnawaveError:
         logger.exception("Could not create Remnawave user")
-        text = "⚠️ Сервер временно недоступен. Уже чиним — попробуй через минуту."
+        text = "⚠️ Сервис временно недоступен. Уже чиним — попробуй через минуту."
         kb = home_keyboard()
         if callback.message.photo:
             await callback.message.edit_caption(
@@ -416,7 +530,7 @@ async def create_trial(callback: CallbackQuery) -> None:
     traffic_label = (
         "∞ Безлимит" if result.traffic_limit_gb == 0 else f"{result.traffic_limit_gb} ГБ"
     )
-    text = trial_success_text(traffic_label, result.device_limit, health_summary(subscription))
+    text = trial_success_text(traffic_label, result.device_limit)
     kb = subscription_keyboard(subscription)
     if callback.message.photo:
         await callback.message.edit_caption(
@@ -455,7 +569,7 @@ async def show_subscription(callback: CallbackQuery) -> None:
             await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
         return
 
-    text = subscription_text(subscription, health_summary(subscription))
+    text = subscription_text(subscription)
     kb = subscription_keyboard(subscription)
     if callback.message.photo:
         await callback.message.edit_caption(
@@ -467,7 +581,7 @@ async def show_subscription(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "subscription:refresh")
 async def refresh_subscription(callback: CallbackQuery) -> None:
-    await callback.answer("🔄 Проверяю серверы…")
+    await callback.answer("🔄 Обновляю профиль…")
     if callback.message is None:
         return
     gateway = make_remnawave_gateway(settings)
@@ -496,7 +610,7 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
     except (RemnawaveError, SubscriptionNotFoundError):
         logger.exception("Could not refresh subscription")
         text = (
-            "⚠️ <b>Не удалось обновить серверы</b>\n\n"
+            "⚠️ <b>Не удалось обновить профиль подключения</b>\n\n"
             "Уже смотрим на проблему. Попробуй через минуту."
         )
         kb = back_keyboard()
@@ -509,10 +623,7 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
         return
 
     if result.is_healthy:
-        endpoint_names = "\n".join(
-            f"   ✦ {html.escape(ep.name)}" for ep in result.endpoints[:6]
-        )
-        text = refresh_success_text(result.endpoint_count, result.response_ms, endpoint_names)
+        text = refresh_success_text(result.response_ms)
         kb = subscription_keyboard(subscription)
         if callback.message.photo:
             await callback.message.edit_caption(
@@ -523,7 +634,7 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
         return
 
     text = (
-        "⚠️ <b>Серверы ещё не готовы</b>\n\n"
+        "⚠️ <b>Профиль ещё обновляется</b>\n\n"
         f"{html.escape(result.message)}.\n\n"
         "Повтори проверку через минуту."
     )
@@ -580,7 +691,7 @@ async def rotate_subscription(callback: CallbackQuery) -> None:
         text = (
             "🔁 <b>Новая ссылка создана</b>\n\n"
             f"⚠️ {html.escape(result.message)}.\n\n"
-            "Серверы ещё инициализируются — попробуй подключиться через минуту."
+            "Профиль ещё инициализируется — попробуй подключиться через минуту."
         )
         kb = subscription_keyboard(subscription)
         if callback.message.photo:
@@ -593,9 +704,8 @@ async def rotate_subscription(callback: CallbackQuery) -> None:
 
     text = (
         "✅ <b>Новая ссылка готова!</b>\n\n"
-        f"🌍 Серверов: {result.endpoint_count}\n\n"
         "Старая ссылка отключена.\n"
-        "Нажми «📲 Подключить устройство» и импортируй профиль заново."
+        f"Нажми «{ce('connect')} Подключить устройство» и импортируй профиль заново."
     )
     kb = subscription_keyboard(subscription)
     if callback.message.photo:
@@ -680,11 +790,15 @@ async def main() -> None:
             [
                 BotCommand(command="start", description="Открыть HamaliVpn"),
                 BotCommand(command="help", description="Помощь и поддержка"),
+                BotCommand(command="status", description="Моя подписка"),
+                BotCommand(command="id", description="Мой Telegram ID"),
             ]
         )
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось обновить команды бота", exc_info=True)
     dispatcher = Dispatcher()
+    dispatcher.message.middleware(TapThrottleMiddleware(interval_seconds=0.45))
+    dispatcher.callback_query.middleware(TapThrottleMiddleware(interval_seconds=0.85))
     dispatcher.include_router(router)
     await bot.delete_webhook(drop_pending_updates=False)
     await dispatcher.start_polling(bot)

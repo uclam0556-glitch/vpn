@@ -3,6 +3,7 @@ import base64
 import httpx
 import pytest
 
+import hamalivpn.subscription_health as subscription_health
 from hamalivpn.subscription_health import (
     decode_subscription_body,
     parse_subscription_endpoints,
@@ -67,3 +68,30 @@ async def test_probe_reports_subscription_endpoints() -> None:
     assert result.status == "healthy"
     assert result.endpoint_count == 1
     assert result.endpoints[0].scheme == "hysteria2"
+
+
+@pytest.mark.asyncio
+async def test_probe_marks_partial_tcp_reachability_as_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = encoded_subscription(
+        "vless://uuid@fast.example:443?type=tcp#Fast",
+        "vless://uuid@dead.example:2053?type=tcp#Dead",
+        "hy2://secret@lte.example:8443#LTE",
+    )
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=body)
+
+    async def fake_tcp_reachable(host: str, port: int, timeout_seconds: float) -> bool:
+        return host == "fast.example" and port == 443
+
+    monkeypatch.setattr(subscription_health, "_tcp_reachable", fake_tcp_reachable)
+
+    result = await probe_subscription_url(
+        "https://panel.example/api/sub/test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.status == "degraded"
+    assert result.endpoint_count == 3
+    assert result.reachable_count == 1
+    assert "TCP доступно: 1/2" in result.message

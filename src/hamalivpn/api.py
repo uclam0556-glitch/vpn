@@ -1,21 +1,32 @@
 import os
 import hmac
 import hashlib
+import logging
 import time
 from urllib.parse import parse_qsl
 from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from .config import get_settings
 from .db import get_session
 from .models import Customer, PaymentStatus, PaymentTransaction
 import json
 import secrets
 
-app = FastAPI(title="HamaliVPN TWA API")
+settings = get_settings()
+_docs_enabled = settings.debug and not settings.is_production
+
+app = FastAPI(
+    title="HamaliVPN TWA API",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +35,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+if not _docs_enabled:
+    @app.get("/docs", include_in_schema=False)
+    @app.get("/redoc", include_in_schema=False)
+    @app.get("/openapi.json", include_in_schema=False)
+    async def disabled_api_docs() -> PlainTextResponse:
+        return PlainTextResponse("Not found", status_code=404)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
@@ -90,7 +109,15 @@ async def get_portal_user(request: Request, credentials: HTTPAuthorizationCreden
     if not customer or not key:
         _auth_record_fail(ip)
         raise HTTPException(status_code=401, detail="Invalid access key")
-    return {"id": customer.telegram_id}
+    if customer.is_blocked and customer.role != "super_admin":
+        _auth_record_fail(ip)
+        raise HTTPException(status_code=403, detail="Доступ заблокирован. Обратитесь к администратору.")
+    return {
+        "id": customer.telegram_id,
+        "db_id": customer.id,
+        "role": customer.role,
+        "is_blocked": customer.is_blocked,
+    }
 
 class SetKeyRequest(BaseModel):
     key: str | None = None
@@ -119,6 +146,14 @@ async def generate_reseller_key(reseller_id: int, req: SetKeyRequest = SetKeyReq
         new_key = secrets.token_urlsafe(32)
 
     reseller.portal_access_key = new_key
+    await _audit(
+        db,
+        customer,
+        "admin.reseller.key.updated",
+        "customer",
+        reseller.id,
+        {"reseller_name": reseller.full_name, "custom_key": bool(custom)},
+    )
     await db.commit()
     return {"status": "ok", "portal_access_key": new_key}
 
@@ -181,7 +216,6 @@ async def get_referral_stats(user: dict = Depends(get_current_user), db: AsyncSe
 import httpx
 import base64
 import urllib.parse
-from .config import get_settings
 
 @app.get("/api/user/usage")
 async def get_user_usage(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
@@ -226,7 +260,7 @@ async def get_user_usage(user: dict = Depends(get_current_user), db: AsyncSessio
         return {"used_bytes": 0, "limit_bytes": 0, "expire_at": None, "error": str(e)}
 
 @app.get("/api/user/servers")
-async def get_user_servers(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
+async def get_user_servers(request: Request, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
     tg_id = user['id']
     result = await db.execute(select(Customer).options(selectinload(Customer.subscriptions)).filter(Customer.telegram_id == tg_id))
     customer = result.scalars().first()
@@ -242,8 +276,15 @@ async def get_user_servers(user: dict = Depends(get_current_user), db: AsyncSess
         return {"servers": [], "error": "No active sub"}
         
     try:
+        client_ip = request.headers.get(
+            "x-forwarded-for",
+            request.client.host if request.client else "127.0.0.1",
+        ).split(",")[0].strip()
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"http://127.0.0.1:8000/api/sub/{active_sub.remnawave_uuid}", headers={"User-Agent": "HamaliVPN-WebApp"})
+            resp = await client.get(
+                f"http://127.0.0.1:8000/api/sub/{active_sub.remnawave_uuid}",
+                headers={"User-Agent": "HamaliVPN-WebApp", "X-Forwarded-For": client_ip},
+            )
             if resp.status_code == 200:
                 decoded = base64.b64decode(resp.content).decode('utf-8')
                 links = [l for l in decoded.split('\n') if l.strip()]
@@ -271,12 +312,10 @@ async def get_user_servers(user: dict = Depends(get_current_user), db: AsyncSess
     except Exception as e:
         return {"servers": [], "error": str(e)}
 
-from pydantic import BaseModel
 from sqlalchemy import desc
 from datetime import timedelta
-from .models import BalanceTransaction, Tariff, Subscription, SubscriptionStatus
+from .models import AuditLog, BalanceTransaction, Tariff, Subscription, SubscriptionStatus, as_utc, utcnow
 from .remnawave import make_remnawave_gateway
-import secrets
 
 class BuyKeyRequest(BaseModel):
     tariff_id: int
@@ -286,20 +325,80 @@ class BuyKeyRequest(BaseModel):
     note: str = ""
 
 
+async def _portal_customer(user: dict, db: AsyncSession, *, lock: bool = False) -> Customer:
+    stmt = select(Customer).where(Customer.telegram_id == user["id"])
+    if lock:
+        stmt = stmt.with_for_update()
+    customer = (await db.execute(stmt)).scalars().first()
+    if not customer:
+        raise HTTPException(401, "Portal user not found")
+    if customer.is_blocked and customer.role != "super_admin":
+        raise HTTPException(403, "Доступ заблокирован")
+    return customer
+
+
+async def _reseller_or_admin(user: dict, db: AsyncSession, *, lock: bool = False) -> Customer:
+    customer = await _portal_customer(user, db, lock=lock)
+    if customer.role not in ["reseller", "super_admin"]:
+        raise HTTPException(403, "Not a reseller")
+    return customer
+
+
+async def _admin_or_403(user: dict, db: AsyncSession) -> Customer:
+    customer = await _portal_customer(user, db)
+    if customer.role != "super_admin":
+        raise HTTPException(403, "Not an admin")
+    return customer
+
+
+def _actor(customer: Customer) -> str:
+    return f"{customer.role}:{customer.id}:tg{customer.telegram_id}"
+
+
+def _safe_details(details: dict | None) -> dict:
+    if not details:
+        return {}
+    blocked_keys = {"portal_access_key", "key", "token", "password", "secret", "sub_url"}
+    safe: dict = {}
+    for key, value in details.items():
+        if key in blocked_keys:
+            continue
+        safe[key] = value
+    return safe
+
+
+async def _audit(
+    db: AsyncSession,
+    actor: Customer,
+    action: str,
+    entity_type: str,
+    entity_id: str | int | None = None,
+    details: dict | None = None,
+) -> None:
+    db.add(
+        AuditLog(
+            actor=_actor(actor),
+            action=action,
+            entity_type=entity_type,
+            entity_id=str(entity_id) if entity_id is not None else None,
+            details=_safe_details(details),
+        )
+    )
+
+
 @app.get("/api/portal/me")
 async def get_portal_me(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    customer = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not customer:
-        raise HTTPException(404)
-    return {"role": customer.role, "name": customer.full_name, "level": customer.reseller_level}
+    customer = await _portal_customer(user, db)
+    return {
+        "role": customer.role,
+        "name": customer.full_name,
+        "level": customer.reseller_level,
+        "is_blocked": customer.is_blocked,
+    }
 
 @app.get("/api/reseller/dashboard")
 async def get_reseller_dashboard(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    customer = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not customer or customer.role not in ["reseller", "super_admin"]:
-        raise HTTPException(403, "Not a reseller")
+    customer = await _reseller_or_admin(user, db)
     
     clients_count = (await db.execute(select(Customer).filter_by(referrer_id=customer.id))).scalars().all()
     txs = (await db.execute(select(BalanceTransaction).filter_by(customer_id=customer.id).order_by(desc(BalanceTransaction.created_at)).limit(10))).scalars().all()
@@ -312,10 +411,7 @@ async def get_reseller_dashboard(user: dict = Depends(get_portal_user), db: Asyn
 
 @app.get("/api/reseller/clients")
 async def get_reseller_clients(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    customer = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not customer or customer.role not in ["reseller", "super_admin"]:
-        raise HTTPException(403, "Not a reseller")
+    customer = await _reseller_or_admin(user, db)
         
     clients = (await db.execute(select(Customer).options(selectinload(Customer.subscriptions)).filter_by(referrer_id=customer.id).order_by(desc(Customer.created_at)))).scalars().all()
 
@@ -339,20 +435,14 @@ async def get_reseller_clients(user: dict = Depends(get_portal_user), db: AsyncS
 
 @app.get("/api/reseller/tariffs")
 async def get_tariffs(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    customer = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not customer or customer.role not in ["reseller", "super_admin"]:
-        raise HTTPException(403, "Not a reseller")
+    await _reseller_or_admin(user, db)
     
     tariffs = (await db.execute(select(Tariff).filter_by(is_active=True))).scalars().all()
     return [{"id": t.id, "name": t.name, "duration_days": t.duration_days, "price_rub": t.price_rub, "device_limit": t.device_limit, "traffic_limit_gb": t.traffic_limit_gb} for t in tariffs]
 
 @app.post("/api/reseller/keys/buy")
 async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    customer = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not customer or customer.role not in ["reseller", "super_admin"]:
-        raise HTTPException(403, "Not a reseller")
+    customer = await _reseller_or_admin(user, db, lock=True)
         
     tariff = await db.get(Tariff, req.tariff_id)
     if not tariff or not tariff.is_active:
@@ -366,7 +456,7 @@ async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db:
     expires_at = now + timedelta(days=tariff.duration_days)
     
     # Create client Customer
-    fake_tg_id = int(secrets.token_hex(4), 16) # random id since they don't auth via tg yet
+    fake_tg_id = int(secrets.token_hex(6), 16) # random id since they don't auth via tg yet
     new_client = Customer(
         telegram_id=fake_tg_id,
         full_name=req.client_name or f"Client of {customer.id}",
@@ -419,6 +509,22 @@ async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db:
         description=f"Purchased {tariff.name} for {new_client.full_name}"
     )
     db.add(tx)
+    await _audit(
+        db,
+        customer,
+        "reseller.key.created",
+        "subscription",
+        sub.id,
+        {
+            "client_id": new_client.id,
+            "client_name": new_client.full_name,
+            "tariff_id": tariff.id,
+            "tariff_name": tariff.name,
+            "amount": -tariff.price_rub,
+            "device_limit": tariff.device_limit,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
 
     await db.commit()
     connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
@@ -462,6 +568,10 @@ async def topup_reseller(reseller_id: int, req: AdminTopupRequest, user: dict = 
         description=f"Manual topup by admin {customer.id}"
     )
     db.add(tx)
+    await _audit(db, customer, "admin.reseller.balance.topped_up", "customer", reseller.id, {
+        "amount": req.amount,
+        "new_balance": reseller.balance_rub,
+    })
     await db.commit()
     return {"status": "ok", "new_balance": reseller.balance_rub}
 
@@ -493,6 +603,11 @@ async def create_reseller(req: CreateResellerRequest, user: dict = Depends(get_p
     customer.role = "reseller"
     customer.reseller_level = req.level or 1
     customer.portal_access_key = new_key
+    await _audit(db, admin, "admin.reseller.created", "customer", customer.id, {
+        "name": customer.full_name,
+        "telegram_id": customer.telegram_id,
+        "level": customer.reseller_level,
+    })
     await db.commit()
     return {"status": "ok", "id": customer.id, "name": customer.full_name, "portal_access_key": new_key}
 
@@ -500,8 +615,8 @@ async def create_reseller(req: CreateResellerRequest, user: dict = Depends(get_p
 # ── Admin: полное управление из панели ───────────────────────────────────────
 
 async def _admin_or_403(user: dict, db: AsyncSession) -> Customer:
-    c = (await db.execute(select(Customer).filter_by(telegram_id=user["id"]))).scalars().first()
-    if not c or c.role != "super_admin":
+    c = await _portal_customer(user, db)
+    if c.role != "super_admin":
         raise HTTPException(403, "Not an admin")
     return c
 
@@ -542,6 +657,31 @@ async def admin_dashboard(user: dict = Depends(get_portal_user), db: AsyncSessio
     }
 
 
+@app.get("/api/admin/audit")
+async def admin_audit_log(
+    limit: int = 120,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    await _admin_or_403(user, db)
+    limit = max(20, min(limit, 300))
+    rows = (
+        await db.execute(select(AuditLog).order_by(desc(AuditLog.created_at)).limit(limit))
+    ).scalars().all()
+    return [
+        {
+            "id": row.id,
+            "actor": row.actor,
+            "action": row.action,
+            "entity_type": row.entity_type,
+            "entity_id": row.entity_id,
+            "details": row.details or {},
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
 class TariffIn(BaseModel):
     name: str
     duration_days: int
@@ -564,32 +704,61 @@ async def admin_list_tariffs(user: dict = Depends(get_portal_user), db: AsyncSes
 
 @app.post("/api/admin/tariffs")
 async def admin_create_tariff(req: TariffIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    await _admin_or_403(user, db)
+    admin = await _admin_or_403(user, db)
     t = Tariff(name=req.name, duration_days=req.duration_days, price_rub=req.price_rub,
                device_limit=req.device_limit, traffic_limit_gb=req.traffic_limit_gb, is_active=req.is_active)
     db.add(t)
+    await db.flush()
+    await _audit(db, admin, "admin.tariff.created", "tariff", t.id, {
+        "name": t.name,
+        "duration_days": t.duration_days,
+        "price_rub": t.price_rub,
+        "device_limit": t.device_limit,
+        "traffic_limit_gb": t.traffic_limit_gb,
+        "is_active": t.is_active,
+    })
     await db.commit()
     return {"status": "ok", "id": t.id}
 
 
 @app.patch("/api/admin/tariffs/{tid}")
 async def admin_edit_tariff(tid: int, req: TariffIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    await _admin_or_403(user, db)
+    admin = await _admin_or_403(user, db)
     t = await db.get(Tariff, tid)
     if not t:
         raise HTTPException(404, "Tariff not found")
+    before = {
+        "name": t.name,
+        "duration_days": t.duration_days,
+        "price_rub": t.price_rub,
+        "device_limit": t.device_limit,
+        "traffic_limit_gb": t.traffic_limit_gb,
+        "is_active": t.is_active,
+    }
     t.name, t.duration_days, t.price_rub = req.name, req.duration_days, req.price_rub
     t.device_limit, t.traffic_limit_gb, t.is_active = req.device_limit, req.traffic_limit_gb, req.is_active
+    await _audit(db, admin, "admin.tariff.updated", "tariff", t.id, {
+        "before": before,
+        "after": {
+            "name": t.name,
+            "duration_days": t.duration_days,
+            "price_rub": t.price_rub,
+            "device_limit": t.device_limit,
+            "traffic_limit_gb": t.traffic_limit_gb,
+            "is_active": t.is_active,
+        },
+    })
     await db.commit()
     return {"status": "ok"}
 
 
 @app.delete("/api/admin/tariffs/{tid}")
 async def admin_delete_tariff(tid: int, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    await _admin_or_403(user, db)
+    admin = await _admin_or_403(user, db)
     t = await db.get(Tariff, tid)
     if t:
-        await db.delete(t)
+        t.is_active = False
+        await _audit(db, admin, "admin.tariff.disabled", "tariff", t.id, {"name": t.name})
         await db.commit()
     return {"status": "ok"}
 
@@ -609,22 +778,31 @@ class BalanceAdjustIn(BaseModel):
 
 @app.post("/api/admin/resellers/{rid}/block")
 async def admin_block_reseller(rid: int, req: BlockIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    await _admin_or_403(user, db)
+    admin = await _admin_or_403(user, db)
     r = await db.get(Customer, rid)
     if not r:
         raise HTTPException(404, "Reseller not found")
     r.is_blocked = req.blocked
+    await _audit(db, admin, "admin.reseller.blocked" if req.blocked else "admin.reseller.unblocked", "customer", r.id, {
+        "reseller_name": r.full_name,
+        "telegram_id": r.telegram_id,
+    })
     await db.commit()
     return {"status": "ok", "is_blocked": r.is_blocked}
 
 
 @app.post("/api/admin/resellers/{rid}/level")
 async def admin_set_level(rid: int, req: LevelIn, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    await _admin_or_403(user, db)
+    admin = await _admin_or_403(user, db)
     r = await db.get(Customer, rid)
     if not r:
         raise HTTPException(404, "Reseller not found")
+    old_level = r.reseller_level
     r.reseller_level = req.level
+    await _audit(db, admin, "admin.reseller.level.updated", "customer", r.id, {
+        "old_level": old_level,
+        "new_level": r.reseller_level,
+    })
     await db.commit()
     return {"status": "ok", "level": r.reseller_level}
 
@@ -640,6 +818,11 @@ async def admin_adjust_balance(rid: int, req: BalanceAdjustIn, admin_user: dict 
         customer_id=r.id, amount=req.amount, type="adjust",
         description=req.comment or f"Корректировка админом {admin.id}",
     ))
+    await _audit(db, admin, "admin.reseller.balance.adjusted", "customer", r.id, {
+        "amount": req.amount,
+        "new_balance": r.balance_rub,
+        "comment": req.comment,
+    })
     await db.commit()
     return {"status": "ok", "new_balance": r.balance_rub}
 
@@ -670,7 +853,7 @@ async def admin_all_keys(q: str = "", user: dict = Depends(get_portal_user), db:
 
 @app.post("/api/admin/keys/{uuid}/disable")
 async def admin_disable_key(uuid: str, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    await _admin_or_403(user, db)
+    admin = await _admin_or_403(user, db)
     sub = (await db.execute(select(Subscription).filter_by(remnawave_uuid=uuid))).scalars().first()
     if not sub:
         raise HTTPException(404, "Key not found")
@@ -680,6 +863,7 @@ async def admin_disable_key(uuid: str, user: dict = Depends(get_portal_user), db
     except Exception:
         pass
     sub.status = SubscriptionStatus.disabled
+    await _audit(db, admin, "admin.key.disabled", "subscription", sub.id, {"remnawave_uuid": uuid})
     await db.commit()
     return {"status": "ok"}
 
@@ -748,6 +932,14 @@ async def admin_create_key(req: AdminCreateKeyRequest, user: dict = Depends(get_
         expires_at=expires_at,
     )
     db.add(sub)
+    await _audit(db, admin, "admin.key.created", "subscription", sub.id, {
+        "client_id": client.id,
+        "client_name": client.full_name,
+        "plan_code": name,
+        "days": days,
+        "device_limit": devices,
+        "traffic_limit_gb": traffic_gb,
+    })
     await db.commit()
     connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
     return {"status": "ok", "connect_url": connect_url, "sub_url": sub.subscription_url}
@@ -973,6 +1165,14 @@ async def _fk_fulfill(order_id: str) -> None:
             if ref:
                 ref_bonus = int(tx.amount * FK_REFERRAL_RATE)
                 ref.balance_rub += ref_bonus
+                db.add(
+                    BalanceTransaction(
+                        customer_id=ref.id,
+                        amount=ref_bonus,
+                        type="referral_bonus",
+                        description=f"Бонус за оплату реферала: {FK_PLAN_NAMES.get(tx.payload or '', tx.payload or 'тариф')}",
+                    )
+                )
                 ref_tg = ref.telegram_id
         sub = await get_latest_subscription(db, customer.telegram_id)
         provisioned = False
@@ -1048,34 +1248,126 @@ async def freekassa_webhook(request: Request, background: BackgroundTasks, db: A
     return PlainTextResponse("YES")
 
 
-app.mount("/portal/assets", StaticFiles(directory="/opt/hamalivpn/portal-webapp/dist/assets"), name="portal_assets")
+@app.get("/api/internal/check_sub_limit")
+async def check_sub_limit(short_uuid: str, ip: str, db: AsyncSession = Depends(get_session)):
+    sub = (
+        await db.execute(
+            select(Subscription).filter(
+                or_(
+                    Subscription.remnawave_short_uuid == short_uuid,
+                    Subscription.remnawave_uuid == short_uuid,
+                    Subscription.access_token == short_uuid,
+                )
+            )
+        )
+    ).scalars().first()
+
+    if not sub or sub.status != SubscriptionStatus.active or as_utc(sub.expires_at) < utcnow():
+        return {"allowed": False, "reason": "invalid_or_expired"}
+
+    redis_key = f"sub:devices:{sub.id}"
+    now_ts = int(time.time())
+    window_start = now_ts - 600
+
+    unique_ips, _backend = await _rolling_unique_ips(redis_key, ip, now_ts)
+
+    if unique_ips <= sub.device_limit:
+        return {"allowed": True, "devices": unique_ips, "limit": sub.device_limit}
+
+    # Prevent the new IP from permanently taking up a slot if it is rejected.
+    await _remove_rolling_ip(redis_key, ip)
+    return {
+        "allowed": False,
+        "reason": "limit_reached",
+        "devices": unique_ips,
+        "limit": sub.device_limit,
+    }
+
+
+PACKAGE_DIR = os.path.dirname(__file__)
+PORTAL_DIST_DIR = os.getenv("PORTAL_DIST_DIR", "/opt/hamalivpn/portal-webapp/dist")
+if not os.path.isdir(PORTAL_DIST_DIR):
+    PORTAL_DIST_DIR = os.path.join(PACKAGE_DIR, "portal_web")
+PORTAL_ASSETS_DIR = os.path.join(PORTAL_DIST_DIR, "assets")
+if os.path.isdir(PORTAL_ASSETS_DIR):
+    app.mount("/portal/assets", StaticFiles(directory=PORTAL_ASSETS_DIR), name="portal_assets")
 
 @app.get("/portal")
 @app.get("/portal/{full_path:path}")
 async def serve_portal(request: Request):
-    import os
-    index_path = "/opt/hamalivpn/portal-webapp/dist/index.html"
+    index_path = os.path.join(PORTAL_DIST_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return {"error": "Portal not built"}
 
-app.mount("/assets", StaticFiles(directory="/opt/hamalivpn/webapp/dist/assets"), name="assets")
-
-# Fallback to index.html for SPA routing
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    file_path = f"/opt/hamalivpn/webapp/dist/{full_path}"
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
-    return FileResponse("/opt/hamalivpn/webapp/dist/index.html")
+WEBAPP_DIST_DIR = os.getenv("WEBAPP_DIST_DIR", "/opt/hamalivpn/webapp/dist")
+WEBAPP_ASSETS_DIR = os.path.join(WEBAPP_DIST_DIR, "assets")
+if os.path.isdir(WEBAPP_ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=WEBAPP_ASSETS_DIR), name="assets")
 
 
+# ── Device control (list / disconnect) — reseller + admin ────────────────────
+# NOTE: must be registered BEFORE the SPA catch-all below, or the GET route
+# gets shadowed by "/{full_path:path}" and returns index.html instead of JSON.
+class DeleteDeviceReq(BaseModel):
+    hwid: str
 
 
+async def _client_sub_for_agent(uuid: str, user: dict, db: AsyncSession):
+    """Resolve the subscription and enforce that the caller may manage it."""
+    agent = await _reseller_or_admin(user, db)
+    sub = (await db.execute(select(Subscription).filter_by(remnawave_uuid=uuid))).scalars().first()
+    if not sub:
+        raise HTTPException(404, "Subscription not found")
+    client = await db.get(Customer, sub.customer_id)
+    if agent.role != "super_admin" and (not client or client.referrer_id != agent.id):
+        raise HTTPException(403, "Not your client")
+    return sub, client, agent
 
-from pydantic import BaseModel
+
+@app.get("/api/reseller/clients/{uuid}/devices")
+async def get_reseller_client_devices(
+    uuid: str,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    sub, _, _ = await _client_sub_for_agent(uuid, user, db)
+    gw = make_remnawave_gateway(get_settings())
+    try:
+        devices = await gw.list_hwid_devices(uuid)
+    except Exception:
+        devices = []
+    return {"device_limit": sub.device_limit, "count": len(devices), "devices": devices}
+
+
+@app.post("/api/reseller/clients/{uuid}/devices/delete")
+async def delete_reseller_client_device(
+    uuid: str,
+    req: DeleteDeviceReq,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    sub, _, actor = await _client_sub_for_agent(uuid, user, db)
+    gw = make_remnawave_gateway(get_settings())
+    await gw.delete_hwid_device(uuid, req.hwid)
+    await _audit(
+        db,
+        actor,
+        "subscription.device.deleted",
+        "subscription",
+        sub.id,
+        {"remnawave_uuid": uuid, "hwid": req.hwid},
+    )
+    await db.commit()
+    return {"status": "ok"}
+
+
 class UpdateDeviceLimitReq(BaseModel):
-    devices_limit: int
+    devices_limit: int = Field(ge=1, le=10)
+
+
+class RenewClientReq(BaseModel):
+    tariff_id: int
 
 @app.get("/api/admin/resellers/{reseller_id}/clients")
 async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
@@ -1097,60 +1389,254 @@ async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_
             "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
             "sub_url": sub.subscription_url if sub else None,
             "remnawave_uuid": sub.remnawave_uuid if sub else None,
-            "device_limit": sub.devices_limit if sub else 0,
-            "device_limit": sub.devices_limit if sub else 0
+            "device_limit": sub.device_limit if sub else 0
         })
     return res
 
 @app.put("/api/reseller/clients/{uuid}")
 async def update_reseller_client(uuid: str, req: UpdateDeviceLimitReq, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    agent = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not agent or agent.role not in ["reseller", "super_admin"]:
-        raise HTTPException(403)
-        
+    sub, _, actor = await _client_sub_for_agent(uuid, user, db)
+
+    gw = make_remnawave_gateway(get_settings())
+    await gw.set_device_limit(uuid, req.devices_limit)
+    old_limit = sub.device_limit
+    sub.device_limit = req.devices_limit
+    await _audit(
+        db,
+        actor,
+        "subscription.device_limit.updated",
+        "subscription",
+        sub.id,
+        {"remnawave_uuid": uuid, "old_limit": old_limit, "new_limit": req.devices_limit},
+    )
+    await db.commit()
+    return {"status": "ok", "device_limit": sub.device_limit}
+
+
+@app.post("/api/reseller/clients/{uuid}/renew")
+async def renew_reseller_client(
+    uuid: str,
+    req: RenewClientReq,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    actor = await _reseller_or_admin(user, db, lock=True)
+
     sub = (await db.execute(select(Subscription).filter_by(remnawave_uuid=uuid))).scalars().first()
     if not sub:
         raise HTTPException(404, "Subscription not found")
-        
+
     client = await db.get(Customer, sub.customer_id)
-    if agent.role != "super_admin" and client.referrer_id != agent.id:
+    if actor.role != "super_admin" and (not client or client.referrer_id != actor.id):
         raise HTTPException(403, "Not your client")
-        
-    from .app import settings
+
+    tariff = await db.get(Tariff, req.tariff_id)
+    if not tariff or not tariff.is_active:
+        raise HTTPException(404, "Tariff not found")
+
+    if actor.role != "super_admin" and actor.balance_rub < tariff.price_rub:
+        raise HTTPException(400, "Insufficient funds")
+
+    from datetime import UTC, datetime
+
+    settings = get_settings()
+    now = datetime.now(UTC)
+    base = max(as_utc(sub.expires_at) if sub.expires_at else now, now)
+    new_exp = base + timedelta(days=tariff.duration_days)
+
     gw = make_remnawave_gateway(settings)
-    
-    success = await gw.update_user_access(user_uuid=uuid, devices_limit=req.devices_limit)
-    if success:
-        sub.devices_limit = req.devices_limit
-        await db.commit()
-        return {"status": "ok"}
-    raise HTTPException(500, "Failed to update in Remnawave")
+    remote = await gw.update_user_access(
+        user_uuid=uuid,
+        expires_at=new_exp,
+        device_limit=tariff.device_limit,
+        traffic_limit_bytes=tariff.traffic_limit_gb * 1024**3,
+        squads=settings.squad_uuids,
+    )
+
+    old_exp = sub.expires_at.isoformat() if sub.expires_at else None
+    old_limit = sub.device_limit
+    sub.status = SubscriptionStatus.active
+    sub.plan_code = tariff.name
+    sub.expires_at = new_exp
+    sub.device_limit = tariff.device_limit
+    sub.traffic_limit_gb = tariff.traffic_limit_gb
+    sub.subscription_url = remote.subscription_url
+    sub.remnawave_short_uuid = remote.short_uuid
+
+    if actor.role != "super_admin":
+        actor.balance_rub -= tariff.price_rub
+        db.add(
+            BalanceTransaction(
+                customer_id=actor.id,
+                amount=-tariff.price_rub,
+                type="renewal",
+                description=f"Renewed {client.full_name if client else uuid} · {tariff.name}",
+            )
+        )
+
+    await _audit(
+        db,
+        actor,
+        "reseller.key.renewed",
+        "subscription",
+        sub.id,
+        {
+            "client_id": client.id if client else None,
+            "client_name": client.full_name if client else "",
+            "tariff_id": tariff.id,
+            "tariff_name": tariff.name,
+            "amount": 0 if actor.role == "super_admin" else -tariff.price_rub,
+            "old_expires_at": old_exp,
+            "new_expires_at": new_exp.isoformat(),
+            "old_device_limit": old_limit,
+            "new_device_limit": tariff.device_limit,
+        },
+    )
+    await db.commit()
+    return {
+        "status": "ok",
+        "expires_at": sub.expires_at.isoformat(),
+        "device_limit": sub.device_limit,
+        "balance": float(actor.balance_rub),
+        "connect_url": f"{settings.public_base_url.rstrip('/')}/connect/{sub.access_token}",
+    }
 
 @app.delete("/api/reseller/clients/{uuid}")
 async def delete_reseller_client(uuid: str, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
-    tg_id = user['id']
-    agent = (await db.execute(select(Customer).filter_by(telegram_id=tg_id))).scalars().first()
-    if not agent or agent.role not in ["reseller", "super_admin"]:
-        raise HTTPException(403)
-        
-    sub = (await db.execute(select(Subscription).filter_by(remnawave_uuid=uuid))).scalars().first()
-    if not sub:
-        raise HTTPException(404, "Subscription not found")
-        
-    client = await db.get(Customer, sub.customer_id)
-    if agent.role != "super_admin" and client.referrer_id != agent.id:
-        raise HTTPException(403, "Not your client")
-        
-    from .app import settings
-    gw = make_remnawave_gateway(settings)
+    sub, client, agent = await _client_sub_for_agent(uuid, user, db)
+    gw = make_remnawave_gateway(get_settings())
     
     # Check if method exists, revoke_subscription or disable_user
     try:
         await gw.revoke_subscription(user_uuid=uuid)
-    except:
+    except Exception:
         await gw.disable_user(user_uuid=uuid)
         
     sub.status = SubscriptionStatus.revoked
+    await _audit(
+        db,
+        agent,
+        "reseller.key.revoked",
+        "subscription",
+        sub.id,
+        {
+            "client_id": client.id if client else None,
+            "client_name": client.full_name if client else "",
+            "remnawave_uuid": uuid,
+        },
+    )
     await db.commit()
     return {"status": "ok"}
+
+
+# ── Hysteria auth / device guard ─────────────────────────────────────────────
+# Standalone Hysteria2 nodes call this endpoint with a subscription secret.
+# We keep a short rolling IP window in Redis; this is not perfect HWID control,
+# but it prevents obvious multi-household sharing without touching Remnawave VLESS.
+import redis.asyncio as redis_async
+
+redis_client = redis_async.from_url(get_settings().redis_url, decode_responses=True)
+redis_docker_client = redis_async.Redis(host="172.19.0.3", port=6379, db=0, decode_responses=True)
+_DEVICE_WINDOW_CACHE: dict[str, dict[str, int]] = {}
+_REDIS_DEVICE_WARNING_EMITTED = False
+
+
+async def _rolling_unique_ips(redis_key: str, ip: str, now_ts: int, window_seconds: int = 600) -> tuple[int, str]:
+    """Track unique client IPs with Redis first and a safe in-process fallback.
+
+    Production currently has two runtimes: Docker services can resolve
+    redis://redis:6379, while the live portal API runs as a host systemd
+    service. If Redis DNS is unavailable from that host process, we still
+    enforce the short rolling window inside the process instead of returning
+    500 and breaking subscriptions.
+    """
+    global _REDIS_DEVICE_WARNING_EMITTED
+    window_start = now_ts - window_seconds
+
+    last_exc: Exception | None = None
+    for client, backend in ((redis_client, "redis-url"), (redis_docker_client, "redis-docker-ip")):
+        try:
+            await client.zremrangebyscore(redis_key, 0, window_start)
+            await client.zadd(redis_key, {ip: now_ts})
+            unique_ips = int(await client.zcard(redis_key))
+            await client.expire(redis_key, window_seconds)
+            return unique_ips, backend
+        except Exception as exc:
+            last_exc = exc
+
+    if not _REDIS_DEVICE_WARNING_EMITTED:
+        logger.warning("Redis device window unavailable; using memory fallback: %s", last_exc)
+        _REDIS_DEVICE_WARNING_EMITTED = True
+
+    bucket = _DEVICE_WINDOW_CACHE.setdefault(redis_key, {})
+    for cached_ip, seen_at in list(bucket.items()):
+        if seen_at <= window_start:
+            bucket.pop(cached_ip, None)
+    bucket[ip] = now_ts
+    return len(bucket), "memory"
+
+
+async def _remove_rolling_ip(redis_key: str, ip: str) -> None:
+    removed = False
+    for client in (redis_client, redis_docker_client):
+        try:
+            await client.zrem(redis_key, ip)
+            removed = True
+        except Exception:
+            pass
+    if not removed:
+        _DEVICE_WINDOW_CACHE.get(redis_key, {}).pop(ip, None)
+
+
+class HysteriaAuthRequest(BaseModel):
+    addr: str
+    auth: str
+    tx: int = 0
+
+
+@app.post("/hysteria/auth")
+async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSession = Depends(get_session)):
+    # Emergency-safe mode for standalone Hysteria2.
+    #
+    # Hiddify/V2Ray clients show Hysteria nodes as "n/a" when this auth endpoint
+    # returns {"ok": false}. Device limiting for Hysteria is intentionally kept
+    # out of the hot path for now; Remnawave/VLESS HWID limits remain enforced.
+    #
+    # Legacy UK/London nodes still use the shared Hysteria password injected only
+    # into active subscription documents. Accept it only from our known node IPs
+    # to avoid opening a public password oracle.
+    legacy_password = settings.hysteria_legacy_password.get_secret_value()
+    legacy_nodes = settings.hysteria_legacy_node_set
+    if legacy_password and req.auth == legacy_password and request.client and request.client.host in legacy_nodes:
+        return {"ok": True, "id": "legacy_hysteria"}
+
+    sub = (
+        await db.execute(
+            select(Subscription).filter(
+                or_(
+                    Subscription.remnawave_uuid == req.auth,
+                    Subscription.access_token == req.auth,
+                    Subscription.remnawave_short_uuid == req.auth,
+                )
+            )
+        )
+    ).scalars().first()
+
+    if not sub or sub.status != SubscriptionStatus.active or as_utc(sub.expires_at) <= utcnow():
+        return {"ok": False, "id": ""}
+
+    return {"ok": True, "id": f"sub_{sub.id}"}
+
+
+# Fallback to index.html for SPA routing.
+# Keep this route LAST: FastAPI resolves routes in declaration order, and a
+# catch-all GET above API routes silently returns HTML where JSON is expected.
+@app.get("/{full_path:path}")
+async def serve_spa(full_path: str):
+    file_path = os.path.join(WEBAPP_DIST_DIR, full_path)
+    index_path = os.path.join(WEBAPP_DIST_DIR, "index.html")
+    if os.path.isfile(file_path):
+        return FileResponse(file_path)
+    if os.path.isfile(index_path):
+        return FileResponse(index_path)
+    return {"error": "Webapp not built"}

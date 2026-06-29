@@ -154,6 +154,7 @@ async def probe_subscription_url(
             response_ms=response_ms,
         )
 
+    udp_endpoint_count = sum(1 for endpoint in endpoints if endpoint.scheme in {"hysteria2", "hy2", "tuic"})
     tcp_endpoints = {
         (endpoint.host, endpoint.port)
         for endpoint in endpoints
@@ -162,6 +163,7 @@ async def probe_subscription_url(
     checks = [_tcp_reachable(host, port, min(timeout_seconds, 4)) for host, port in tcp_endpoints]
     check_results = await asyncio.gather(*checks) if checks else []
     reachable_count = sum(check_results)
+    tcp_endpoint_count = len(tcp_endpoints)
     if tcp_endpoints and reachable_count == 0:
         return SubscriptionProbeResult(
             status="degraded",
@@ -171,10 +173,30 @@ async def probe_subscription_url(
             response_ms=response_ms,
             endpoints=endpoints,
         )
+    if tcp_endpoint_count and reachable_count < tcp_endpoint_count:
+        return SubscriptionProbeResult(
+            status="degraded",
+            message=(
+                f"TCP доступно: {reachable_count}/{tcp_endpoint_count}; "
+                f"LTE/UDP в подписке: {udp_endpoint_count}"
+            ),
+            endpoint_count=len(endpoints),
+            reachable_count=reachable_count,
+            response_ms=response_ms,
+            endpoints=endpoints,
+        )
+
+    if not tcp_endpoint_count and udp_endpoint_count:
+        message = f"LTE/UDP серверов в подписке: {udp_endpoint_count}; TCP-проверки нет"
+    else:
+        message = (
+            f"TCP доступно: {reachable_count}/{tcp_endpoint_count}; "
+            f"LTE/UDP в подписке: {udp_endpoint_count}"
+        )
 
     return SubscriptionProbeResult(
         status="healthy",
-        message=f"Готово серверов: {len(endpoints)}",
+        message=message,
         endpoint_count=len(endpoints),
         reachable_count=reachable_count,
         response_ms=response_ms,

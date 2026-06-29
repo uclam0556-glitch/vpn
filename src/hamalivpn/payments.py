@@ -19,6 +19,7 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import SessionFactory
 from .models import (
+    BalanceTransaction,
     Customer,
     PaymentStatus,
     PaymentTransaction,
@@ -179,7 +180,7 @@ async def successful_payment(message: Message) -> None:
     gateway = make_remnawave_gateway(settings)
 
     async with SessionFactory() as session:
-        # Give 10% back to referrer if exists
+        # Give referral bonus back to referrer if exists.
         customer_stmt = select(Customer).where(Customer.telegram_id == message.from_user.id)
         customer_result = await session.execute(customer_stmt)
         customer = customer_result.scalars().first()
@@ -189,6 +190,14 @@ async def successful_payment(message: Message) -> None:
             if referrer:
                 bonus = int(plan["price"] * REFERRAL_RATE)
                 referrer.balance_rub += bonus
+                session.add(
+                    BalanceTransaction(
+                        customer_id=referrer.id,
+                        amount=bonus,
+                        type="referral_bonus",
+                        description=f"Бонус за оплату реферала: {plan['name']}",
+                    )
+                )
                 try:
                     await message.bot.send_message(
                         referrer.telegram_id,

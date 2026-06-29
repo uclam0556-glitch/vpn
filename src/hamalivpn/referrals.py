@@ -1,15 +1,26 @@
+import html
 import logging
+from datetime import UTC, datetime
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from sqlalchemy import select
+from sqlalchemy import distinct, func, select
 
 from .config import get_settings
 from .db import SessionFactory
-from .models import Customer, WithdrawalRequest, WithdrawalStatus
+from .models import (
+    BalanceTransaction,
+    Customer,
+    PaymentStatus,
+    PaymentTransaction,
+    Subscription,
+    SubscriptionStatus,
+    WithdrawalRequest,
+    WithdrawalStatus,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -27,40 +38,133 @@ class SetupState(StatesGroup):
 
 def _kb(can_withdraw: bool) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🏦 Настроить реквизиты", callback_data="ref:setup"))
+    b.row(InlineKeyboardButton(text="🔗 Получить ссылку", callback_data="ref:link"))
+    b.row(InlineKeyboardButton(text="🏦 Реквизиты вывода", callback_data="ref:setup"))
     if can_withdraw:
         b.row(InlineKeyboardButton(text="💸 Вывести средства", callback_data="ref:withdraw"))
-    b.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    b.row(
+        InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:referrals"),
+        InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"),
+    )
     return b.as_markup()
 
 
-async def _render(bot, tg_id: int):
+def _money(value: int | None) -> str:
+    return f"{int(value or 0):,}".replace(",", " ") + " ₽"
+
+
+def _mask_requisites(value: str | None) -> str:
+    if not value:
+        return "не указаны"
+    value = value.strip()
+    if len(value) <= 8:
+        return "••••"
+    return f"{value[:4]}••••{value[-4:]}"
+
+
+async def _ensure_customer(tg_id: int, username: str | None = None, full_name: str = "") -> Customer:
     async with SessionFactory() as s:
         customer = await s.scalar(select(Customer).where(Customer.telegram_id == tg_id))
-        balance = customer.balance_rub if customer else 0
-        method = customer.withdrawal_method if customer else None
-        requisites = customer.withdrawal_requisites if customer else None
-        ref_count = 0
-        if customer:
-            rows = (await s.execute(select(Customer.id).where(Customer.referrer_id == customer.id))).all()
-            ref_count = len(rows)
+        if customer is None:
+            customer = Customer(
+                telegram_id=tg_id,
+                telegram_username=username,
+                full_name=full_name or "",
+            )
+            s.add(customer)
+            await s.commit()
+            await s.refresh(customer)
+        else:
+            changed = False
+            if username and customer.telegram_username != username:
+                customer.telegram_username = username
+                changed = True
+            if full_name and customer.full_name != full_name:
+                customer.full_name = full_name
+                changed = True
+            if changed:
+                await s.commit()
+                await s.refresh(customer)
+        return customer
+
+
+async def _render(bot, tg_id: int, username: str | None = None, full_name: str = ""):
+    customer = await _ensure_customer(tg_id, username=username, full_name=full_name)
+    async with SessionFactory() as s:
+        customer = await s.scalar(select(Customer).where(Customer.telegram_id == tg_id))
+        if customer is None:
+            raise RuntimeError("Customer was not created")
+
+        balance = customer.balance_rub
+        method = customer.withdrawal_method
+        requisites = customer.withdrawal_requisites
+
+        referred_ids = [
+            row[0]
+            for row in (
+                await s.execute(select(Customer.id).where(Customer.referrer_id == customer.id))
+            ).all()
+        ]
+        ref_count = len(referred_ids)
+        active_count = 0
+        paid_count = 0
+        paid_amount = 0
+        earned_total = 0
+        if referred_ids:
+            active_count = int(
+                await s.scalar(
+                    select(func.count(distinct(Subscription.customer_id))).where(
+                        Subscription.customer_id.in_(referred_ids),
+                        Subscription.status == SubscriptionStatus.active,
+                        Subscription.expires_at > datetime.now(UTC),
+                    )
+                )
+                or 0
+            )
+            paid_row = (
+                await s.execute(
+                    select(
+                        func.count(PaymentTransaction.id),
+                        func.coalesce(func.sum(PaymentTransaction.amount), 0),
+                    ).where(
+                        PaymentTransaction.customer_id.in_(referred_ids),
+                        PaymentTransaction.status == PaymentStatus.paid,
+                    )
+                )
+            ).one()
+            paid_count = int(paid_row[0] or 0)
+            paid_amount = int(paid_row[1] or 0)
+
+        earned_total = int(
+            await s.scalar(
+                select(func.coalesce(func.sum(BalanceTransaction.amount), 0)).where(
+                    BalanceTransaction.customer_id == customer.id,
+                    BalanceTransaction.type == "referral_bonus",
+                )
+            )
+            or 0
+        )
+
     info = await bot.me()
     link = f"https://t.me/{info.username}?start=ref_{tg_id}"
     rate = int(REFERRAL_RATE * 100)
     text = (
-        "👥 <b>Партнёрская программа</b>\n\n"
-        "💼 Зарабатывай вместе с нами!\n"
-        f"1) Приглашай друзей по своей ссылке и получай <b>{rate}%</b> с каждого их пополнения.\n"
-        "2) Выводи заработок удобным способом.\n\n"
-        "🔗 Твоя ссылка:\n"
+        "⭐️ <b>Бонусы HamaliVPN</b>\n\n"
+        "Это живая статистика по вашей реферальной ссылке.\n\n"
+        "🔗 <b>Ваша ссылка</b>\n"
         f"<code>{link}</code>\n\n"
-        "📊 <b>Статистика:</b>\n"
-        f"👤 Приглашено: <b>{ref_count}</b>\n"
-        f"💰 Баланс: <b>{balance} ₽</b>\n"
-        f"🏦 Способ вывода: {METHODS.get(method, 'не задан')}\n"
-        f"🧾 Реквизиты: {requisites or 'не указаны'}\n\n"
-        f"💸 Вывод доступен от <b>{MIN_WITHDRAWAL} ₽</b>. Ставка: <b>{rate}%</b>\n"
-        f"Пример: платёж 540 ₽ → бонус {int(540 * REFERRAL_RATE)} ₽"
+        "📊 <b>Статистика</b>\n"
+        f"👥 Приглашено всего: <b>{ref_count}</b>\n"
+        f"🟢 Активных подписок: <b>{active_count}</b>\n"
+        f"💳 Оплаченных заказов: <b>{paid_count}</b>\n"
+        f"💰 Оплат от приглашённых: <b>{_money(paid_amount)}</b>\n"
+        f"🎁 Начислено бонусов: <b>{_money(earned_total)}</b>\n"
+        f"🏦 Доступно к выводу: <b>{_money(balance)}</b>\n\n"
+        "⚙️ <b>Настройки вывода</b>\n"
+        f"Способ: <b>{METHODS.get(method, 'не задан')}</b>\n"
+        f"Реквизиты: <code>{html.escape(_mask_requisites(requisites))}</code>\n\n"
+        f"Ставка бонуса: <b>{rate}%</b>. Вывод доступен от <b>{_money(MIN_WITHDRAWAL)}</b>.\n"
+        "Если статистика по оплатам пока нулевая — это не демо, просто ещё нет подтверждённых оплат."
     )
     return text, _kb(balance >= MIN_WITHDRAWAL)
 
@@ -79,8 +183,31 @@ async def _show(message_or_cb, text: str, kb: InlineKeyboardMarkup) -> None:
 async def show_referrals_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.answer()
-    text, kb = await _render(callback.message.bot, callback.from_user.id)
+    text, kb = await _render(
+        callback.message.bot,
+        callback.from_user.id,
+        username=callback.from_user.username,
+        full_name=callback.from_user.full_name or "",
+    )
     await _show(callback, text, kb)
+
+
+@router.callback_query(F.data == "ref:link")
+async def send_referral_link(callback: CallbackQuery) -> None:
+    await callback.answer()
+    await _ensure_customer(
+        callback.from_user.id,
+        username=callback.from_user.username,
+        full_name=callback.from_user.full_name or "",
+    )
+    info = await callback.message.bot.me()
+    link = f"https://t.me/{info.username}?start=ref_{callback.from_user.id}"
+    await callback.message.answer(
+        "🔗 <b>Ваша реферальная ссылка</b>\n\n"
+        f"<code>{link}</code>\n\n"
+        "Отправьте её друзьям. Когда появятся подтверждённые оплаты — статистика обновится автоматически.",
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data == "ref:setup")
@@ -90,7 +217,7 @@ async def setup_method(callback: CallbackQuery) -> None:
     for code, name in METHODS.items():
         b.row(InlineKeyboardButton(text=name, callback_data=f"ref:method:{code}"))
     b.row(InlineKeyboardButton(text="← Назад", callback_data="menu:referrals"))
-    await _show(callback, "🏦 <b>Способ вывода</b>\n\nВыберите, куда выводить заработок:", b.as_markup())
+    await _show(callback, "🏦 <b>Способ вывода</b>\n\nВыберите, куда выводить бонусы:", b.as_markup())
 
 
 @router.callback_query(F.data.startswith("ref:method:"))
@@ -124,7 +251,12 @@ async def save_requisites(message: Message, state: FSMContext) -> None:
             customer.withdrawal_requisites = requisites
             await s.commit()
     await message.answer("✅ Реквизиты сохранены.")
-    text, kb = await _render(message.bot, message.from_user.id)
+    text, kb = await _render(
+        message.bot,
+        message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name or "",
+    )
     await _show(message, text, kb)
 
 

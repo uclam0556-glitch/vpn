@@ -6,8 +6,13 @@ bot/.env
 
 # Локальные файлы с хардкодом секретов (пароль Hysteria, пины) — НЕ в публичный репо
 sub_injector_new.py
+sub_injector.py
+server_api.py
+config*.yaml
+src/hamalivpn/api_remote.py
 install_hysteria.sh
 Caddyfile_remote
+*.bak.*
 
 # OS / редакторы
 .DS_Store

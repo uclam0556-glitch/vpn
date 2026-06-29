@@ -44,6 +44,12 @@ class RemnawaveGateway(Protocol):
 
     async def revoke_subscription(self, user_uuid: str) -> RemoteUser | None: ...
 
+    async def set_device_limit(self, user_uuid: str, device_limit: int) -> None: ...
+
+    async def list_hwid_devices(self, user_uuid: str) -> list[dict]: ...
+
+    async def delete_hwid_device(self, user_uuid: str, hwid: str) -> None: ...
+
 
 class RemnawaveClient:
     def __init__(
@@ -142,6 +148,28 @@ class RemnawaveClient:
         )
         return self._parse_user(response)
 
+    async def set_device_limit(self, user_uuid: str, device_limit: int) -> None:
+        # Partial update: keep expiry/squads/traffic untouched and only change HWID limit.
+        await self._request(
+            "PATCH",
+            "/api/users",
+            json={"uuid": user_uuid, "hwidDeviceLimit": device_limit},
+        )
+
+    async def list_hwid_devices(self, user_uuid: str) -> list[dict]:
+        response = await self._request("GET", f"/api/hwid/devices/{user_uuid}")
+        return response.get("response", {}).get("devices", [])
+
+    async def delete_hwid_device(self, user_uuid: str, hwid: str) -> None:
+        try:
+            await self._request(
+                "POST",
+                "/api/hwid/devices/delete",
+                json={"userUuid": user_uuid, "hwid": hwid},
+            )
+        except RemnawaveNotFoundError:
+            pass  # already removed — idempotent success
+
 
 class MockRemnawaveClient:
     """Deterministic local gateway used before the real panel is connected."""
@@ -194,6 +222,15 @@ class MockRemnawaveClient:
         )
 
     async def revoke_subscription(self, user_uuid: str) -> RemoteUser | None:
+        return None
+
+    async def set_device_limit(self, user_uuid: str, device_limit: int) -> None:
+        return None
+
+    async def list_hwid_devices(self, user_uuid: str) -> list[dict]:
+        return []
+
+    async def delete_hwid_device(self, user_uuid: str, hwid: str) -> None:
         return None
 
 
