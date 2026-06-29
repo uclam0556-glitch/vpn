@@ -207,6 +207,7 @@ async def record_subscription_health(
             subscription.subscription_url,
             timeout_seconds=settings.subscription_probe_timeout_seconds,
             user_agent=settings.subscription_probe_user_agent,
+            extra_headers={"X-Proxy-Bypass": "true"},
         )
 
     subscription.health_status = result.status

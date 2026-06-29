@@ -71,6 +71,31 @@ async def test_probe_reports_subscription_endpoints() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_sends_extra_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    body = encoded_subscription("vless://uuid@node.example:443?type=tcp#Node")
+    seen_header = None
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal seen_header
+        seen_header = request.headers.get("X-Proxy-Bypass")
+        return httpx.Response(200, text=body)
+
+    async def fake_tcp_reachable(host: str, port: int, timeout_seconds: float) -> bool:
+        return True
+
+    monkeypatch.setattr(subscription_health, "_tcp_reachable", fake_tcp_reachable)
+
+    result = await probe_subscription_url(
+        "https://panel.example/api/sub/test",
+        extra_headers={"X-Proxy-Bypass": "true"},
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert result.status == "healthy"
+    assert seen_header == "true"
+
+
+@pytest.mark.asyncio
 async def test_probe_marks_partial_tcp_reachability_as_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
     body = encoded_subscription(
         "vless://uuid@fast.example:443?type=tcp#Fast",

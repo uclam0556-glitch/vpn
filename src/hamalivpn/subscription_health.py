@@ -112,18 +112,22 @@ async def probe_subscription_url(
     *,
     timeout_seconds: float = 8,
     user_agent: str = "Happ/4.11.0/ios/2606031844510",
+    extra_headers: dict[str, str] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> SubscriptionProbeResult:
     started = time.monotonic()
+    headers = {
+        "User-Agent": user_agent,
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     try:
         async with httpx.AsyncClient(
             timeout=timeout_seconds,
             follow_redirects=True,
-            headers={
-                "User-Agent": user_agent,
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-            },
+            headers=headers,
             transport=transport,
         ) as client:
             response = await client.get(subscription_url)
