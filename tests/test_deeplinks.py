@@ -1,6 +1,7 @@
 from hamalivpn.deeplinks import (
     happ_deeplink,
     hiddify_deeplink,
+    incy_deeplink,
     streisand_deeplink,
     v2raytun_deeplink,
 )
@@ -38,3 +39,34 @@ def test_streisand_deeplink_encodes_url_correctly() -> None:
     url = "https://panel.1.2.3.4.sslip.io/api/sub/abc123"
     link = streisand_deeplink(url)
     assert link == "streisand://import/https%3A%2F%2Fpanel.1.2.3.4.sslip.io%2Fapi%2Fsub%2Fabc123"
+
+
+def test_incy_deeplink_uses_official_crypt_scheme(monkeypatch) -> None:
+    class Result:
+        stdout = "incy://crypt1/encrypted-payload"
+
+    calls = {}
+
+    def fake_which(name: str) -> str:
+        calls["node_name"] = name
+        return "/usr/bin/node"
+
+    def fake_run(cmd, **kwargs):
+        calls["cmd"] = cmd
+        calls["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr("hamalivpn.deeplinks.shutil.which", fake_which)
+    monkeypatch.setattr("hamalivpn.deeplinks.subprocess.run", fake_run)
+
+    link = incy_deeplink("https://sub.example.com/a", "HamaliVPN")
+
+    assert link == "incy://crypt1/encrypted-payload"
+    assert calls["node_name"] == "node"
+    assert calls["cmd"][0] == "/usr/bin/node"
+    assert calls["kwargs"]["timeout"] == 2
+
+
+def test_incy_deeplink_hides_button_when_encoder_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr("hamalivpn.deeplinks.shutil.which", lambda _name: None)
+    assert incy_deeplink("https://sub.example.com/a") == ""

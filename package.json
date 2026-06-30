@@ -1,0 +1,9 @@
+{
+  "name": "hamalivpn-control-assets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "@incy/link-encoder": "1.0.1"
+  }
+}

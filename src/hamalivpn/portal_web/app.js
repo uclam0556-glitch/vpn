@@ -6,9 +6,35 @@ const KEY_STORE = "hamali_portal_key";
 
 const state = { me: null, tab: null, cache: {} };
 
-const getKey = () => localStorage.getItem(KEY_STORE) || "";
-const setKey = (k) => localStorage.setItem(KEY_STORE, k);
-const clearKey = () => localStorage.removeItem(KEY_STORE);
+let memoryKey = "";
+
+function getStorage() {
+  try {
+    const storage = window.localStorage;
+    const probe = "__hamali_probe__";
+    storage.setItem(probe, "1");
+    storage.removeItem(probe);
+    return storage;
+  } catch (err) {
+    return null;
+  }
+}
+
+const safeStorage = getStorage();
+const getKey = () => {
+  try { return safeStorage ? (safeStorage.getItem(KEY_STORE) || "") : memoryKey; }
+  catch (err) { return memoryKey; }
+};
+const setKey = (k) => {
+  memoryKey = k || "";
+  try { if (safeStorage) safeStorage.setItem(KEY_STORE, memoryKey); }
+  catch (err) { /* memory fallback */ }
+};
+const clearKey = () => {
+  memoryKey = "";
+  try { if (safeStorage) safeStorage.removeItem(KEY_STORE); }
+  catch (err) { /* memory fallback */ }
+};
 
 async function api(path, { method = "GET", body } = {}) {
   const res = await fetch(`/api${path}`, {
@@ -25,8 +51,8 @@ async function api(path, { method = "GET", body } = {}) {
     throw new Error("unauthorized");
   }
   let data = null;
-  try { data = await res.json(); } catch { /* no body */ }
-  if (res.status === 403 && String(data?.detail || "").toLowerCase().includes("заблок")) {
+  try { data = await res.json(); } catch (err) { /* no body */ }
+  if (res.status === 403 && String((data && data.detail) || "").toLowerCase().includes("заблок")) {
     clearKey();
     renderLogin(data.detail || "Доступ заблокирован");
     throw new Error("unauthorized");
@@ -46,7 +72,7 @@ function toast(msg, kind = "") {
 }
 
 const esc = (s) =>
-  String(s ?? "").replace(/[&<>"']/g, (c) =>
+  String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const rub = (n) => `${Math.round(Number(n || 0)).toLocaleString("ru-RU")} ₽`;
 
@@ -80,7 +106,7 @@ const LEVEL_RU = {
 
 async function copy(text, label = "Скопировано") {
   try { await navigator.clipboard.writeText(text); toast(label, "ok"); }
-  catch { toast("Не удалось скопировать", "err"); }
+  catch (err) { toast("Не удалось скопировать", "err"); }
 }
 
 function modal(html) {
@@ -92,7 +118,10 @@ function modal(html) {
   document.body.appendChild(back);
   return back;
 }
-const closeModal = () => document.querySelector(".modal-backdrop")?.remove();
+const closeModal = () => {
+  const back = document.querySelector(".modal-backdrop");
+  if (back) back.remove();
+};
 
 // ── login ────────────────────────────────────────────────────────────────
 function renderLogin(error = "") {
@@ -128,6 +157,24 @@ function renderLogin(error = "") {
       if (err.message !== "unauthorized") renderLogin("Неверный ключ");
     }
   });
+}
+
+function renderFatal(error = "") {
+  const message = error ? String(error).slice(0, 180) : "Не удалось загрузить кабинет";
+  app.innerHTML = `
+    <div class="login">
+      <div class="login__card">
+        <div class="brand">
+          <div class="brand__mark">H</div>
+          <div><div class="brand__name">HamaliVPN</div>
+            <div class="brand__sub">Партнёрский кабинет</div></div>
+        </div>
+        <h1>Кабинет не загрузился</h1>
+        <p class="hint">Обновите страницу. Если ошибка повторится — откройте ссылку в Safari/Chrome или напишите в поддержку.</p>
+        <p class="hint" style="color:var(--danger)">${esc(message)}</p>
+        <button class="btn btn--primary" type="button" onclick="location.reload()">Обновить</button>
+      </div>
+    </div>`;
 }
 
 // ── shell ────────────────────────────────────────────────────────────────
@@ -209,7 +256,7 @@ async function viewBuy(view) {
   const tariffs = await api("/reseller/tariffs");
   view.innerHTML = `
     <div class="section-title"><h2>Выберите тариф</h2>
-      <span class="muted">Баланс: ${rub(state.cache.balance ?? 0)}</span></div>
+      <span class="muted">Баланс: ${rub((state.cache.balance != null ? state.cache.balance : 0))}</span></div>
     <div class="grid grid--2">
       ${tariffs.length ? tariffs.map(tariffCard).join("") : `<div class="empty">Тарифы не настроены</div>`}
     </div>`;
@@ -247,7 +294,7 @@ function openBuyModal(t) {
       closeModal();
       toast("Ключ создан, баланс обновлён", "ok");
       showSubModal(r.connect_url || r.sub_url);
-      state.cache.balance = (state.cache.balance ?? 0) - t.price_rub;
+      state.cache.balance = ((state.cache.balance != null ? state.cache.balance : 0)) - t.price_rub;
     } catch (err) {
       btn.disabled = false; btn.textContent = `Списать ${rub(t.price_rub)}`;
       toast(err.message, "err");
@@ -510,7 +557,7 @@ function resellerRow(r) {
       <div class="row__title">${esc(r.name || "Без имени")}
         ${r.level ? `<span class="pill">${LEVEL_RU[r.level] || r.level}</span>` : ""}
         ${r.is_blocked ? `<span class="tag tag--disabled">Блок</span>` : ""}</div>
-      <div class="row__meta">ID ${r.id} · tg ${r.telegram_id ?? "—"} · Баланс: ${rub(r.balance)}</div>
+      <div class="row__meta">ID ${r.id} · tg ${(r.telegram_id != null ? r.telegram_id : "—")} · Баланс: ${rub(r.balance)}</div>
     </div>
     <div class="row__actions">
       <button class="btn btn--sm" data-manage='${esc(JSON.stringify(r))}'>Управление</button>
@@ -522,7 +569,7 @@ function openResellerManageModal(r) {
   const curKey = r.portal_access_key || "";
   modal(`
     <h3>${esc(r.name || "Реселлер")}</h3>
-    <p class="sub">ID ${r.id} · tg ${r.telegram_id ?? "—"} · Баланс: <b>${rub(r.balance)}</b></p>
+    <p class="sub">ID ${r.id} · tg ${(r.telegram_id != null ? r.telegram_id : "—")} · Баланс: <b>${rub(r.balance)}</b></p>
 
     <div class="field"><label>Текущий ключ доступа</label>
       <div class="codebox">${esc(curKey || "не задан")}</div></div>
@@ -696,7 +743,7 @@ async function viewAllKeys(view) {
         return `<div class="row">
           <div class="row__main">
             <div class="row__title">${esc(k.client || "—")} <span class="tag tag--${cls}">${label}</span></div>
-            <div class="row__meta">tg ${k.telegram_id ?? "—"} · до ${fmtDate(k.expires_at)}${k.reseller_id ? " · реселлер #" + k.reseller_id : ""}</div>
+            <div class="row__meta">tg ${(k.telegram_id != null ? k.telegram_id : "—")} · до ${fmtDate(k.expires_at)}${k.reseller_id ? " · реселлер #" + k.reseller_id : ""}</div>
           </div>
           <div class="row__actions">
             ${k.uuid && k.status === "active" ? `<button class="btn btn--sm btn--danger" data-key-disable="${esc(k.uuid)}">Отключить</button>` : ""}
@@ -780,7 +827,7 @@ async function viewAudit(view) {
 function auditRow(a) {
   const d = a.details || {};
   const detail = Object.entries(d).slice(0, 6).map(([k, v]) => {
-    const value = typeof v === "object" ? JSON.stringify(v) : String(v ?? "");
+    const value = typeof v === "object" ? JSON.stringify(v) : String(v == null ? "" : v);
     return `${k}: ${value}`;
   }).join(" · ");
   return `<div class="row">
@@ -820,4 +867,11 @@ async function boot() {
   try { state.me = await api("/portal/me"); renderShell(); }
   catch (err) { if (err.message !== "unauthorized") renderLogin(); }
 }
-boot();
+window.addEventListener("error", (event) => {
+  renderFatal(event.message || "Ошибка интерфейса");
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason && (event.reason.message || event.reason);
+  renderFatal(reason || "Ошибка загрузки данных");
+});
+boot().catch((err) => renderFatal(err && err.message));

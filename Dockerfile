@@ -8,7 +8,13 @@ RUN addgroup --system hamali && adduser --system --ingroup hamali hamali
 
 WORKDIR /app
 
-COPY pyproject.toml README.md alembic.ini ./
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends nodejs npm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json pyproject.toml README.md alembic.ini ./
+RUN npm ci --omit=dev
+
 COPY src ./src
 COPY migrations ./migrations
 RUN pip install --upgrade pip && pip install .

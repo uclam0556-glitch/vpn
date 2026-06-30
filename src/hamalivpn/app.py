@@ -16,7 +16,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import ensure_csrf, verify_credentials, verify_csrf
 from .config import get_settings
 from .db import create_schema, get_session
-from .deeplinks import happ_deeplink, hiddify_deeplink, streisand_deeplink, v2raytun_deeplink
+from .deeplinks import (
+    happ_deeplink,
+    hiddify_deeplink,
+    incy_deeplink,
+    streisand_deeplink,
+    v2raytun_deeplink,
+)
 from .models import AuditLog, Customer, Subscription, as_utc
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
@@ -104,6 +110,7 @@ async def connect_page(
             "hiddify_link": hiddify_deeplink(subscription_url, settings.subscription_name),
             "v2raytun_link": v2raytun_deeplink(subscription_url),
             "happ_link": happ_deeplink(subscription_url),
+            "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
             "streisand_link": streisand_deeplink(subscription_url),
             "expired": expires_at <= datetime.now(UTC),
             "support_username": settings.support_username,
@@ -307,4 +314,3 @@ async def cryptomus_webhook(request: Request, session: SessionDep) -> PlainTextR
             await bot.session.close()
 
     return PlainTextResponse("OK")
-
