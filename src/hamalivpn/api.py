@@ -6,7 +6,7 @@ import time
 from urllib.parse import parse_qsl
 from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Header, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1300,12 +1300,6 @@ async def serve_portal(request: Request):
         return FileResponse(index_path)
     return {"error": "Portal not built"}
 
-WEBAPP_DIST_DIR = os.getenv("WEBAPP_DIST_DIR", "/opt/hamalivpn/webapp/dist")
-WEBAPP_ASSETS_DIR = os.path.join(WEBAPP_DIST_DIR, "assets")
-if os.path.isdir(WEBAPP_ASSETS_DIR):
-    app.mount("/assets", StaticFiles(directory=WEBAPP_ASSETS_DIR), name="assets")
-
-
 # ── Device control (list / disconnect) — reseller + admin ────────────────────
 # NOTE: must be registered BEFORE the SPA catch-all below, or the GET route
 # gets shadowed by "/{full_path:path}" and returns index.html instead of JSON.
@@ -1628,15 +1622,19 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
     return {"ok": True, "id": f"sub_{sub.id}"}
 
 
-# Fallback to index.html for SPA routing.
+# Redirect every non-API frontend route to the active partner portal.
+#
+# The old Telegram mini-app used to be served from /opt/hamalivpn/webapp/dist
+# through this catch-all route. That made portal.hamali.ru and app.hamali.ru
+# randomly open an obsolete interface. Keep the reseller portal as the only
+# public frontend entry point.
+@app.get("/")
+async def serve_portal_root():
+    return RedirectResponse(url="/portal", status_code=307)
+
+
 # Keep this route LAST: FastAPI resolves routes in declaration order, and a
 # catch-all GET above API routes silently returns HTML where JSON is expected.
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    file_path = os.path.join(WEBAPP_DIST_DIR, full_path)
-    index_path = os.path.join(WEBAPP_DIST_DIR, "index.html")
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
-    if os.path.isfile(index_path):
-        return FileResponse(index_path)
-    return {"error": "Webapp not built"}
+    return RedirectResponse(url="/portal", status_code=307)

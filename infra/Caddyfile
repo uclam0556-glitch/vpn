@@ -14,7 +14,20 @@
 
 {$PANEL_HOST} {
     encode zstd gzip
-    reverse_proxy remnawave:3000
+
+
+
+    handle {
+    @nobypass {
+        not header X-Proxy-Bypass true
+        path /api/sub/*
+    }
+    handle @nobypass {
+        reverse_proxy 172.17.0.1:8000
+    }
+
+        reverse_proxy remnawave:3000
+    }
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -25,9 +38,9 @@
     }
 }
 
-{$CABINET_HOST}, {$CABINET_FALLBACK_HOST} {
+{$CABINET_HOST}, {$CABINET_FALLBACK_HOST}, portal.hamali.ru {
     encode zstd gzip
-    reverse_proxy control:8080
+    reverse_proxy 172.17.0.1:8001
 
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -36,4 +49,12 @@
         Permissions-Policy "camera=(), microphone=(), geolocation=()"
         -Server
     }
+}
+
+de.hamali.ru {
+    reverse_proxy 92.119.166.192:8080
+}
+
+http://app.hamali.ru {
+    reverse_proxy 172.17.0.1:8001
 }
