@@ -1138,7 +1138,11 @@ FK_PLAN_NAMES = {
 FK_REFERRAL_RATE = 0.30
 
 
-async def _tg_send(telegram_id: int, text: str) -> None:
+def _connect_url(subscription: Subscription) -> str:
+    return f"{settings.public_base_url.rstrip('/')}/connect/{subscription.access_token}"
+
+
+async def _tg_send(telegram_id: int, text: str, reply_markup=None) -> None:
     token = os.getenv("BOT_TOKEN", "")
     if not token:
         return
@@ -1146,18 +1150,67 @@ async def _tg_send(telegram_id: int, text: str) -> None:
         from aiogram import Bot
         bot = Bot(token=token)
         try:
-            await bot.send_message(telegram_id, text, parse_mode="HTML")
+            await bot.send_message(
+                telegram_id,
+                text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
         finally:
             await bot.session.close()
     except Exception:
         pass
 
 
-async def _fk_notify(telegram_id: int, plan_code: str, days: int) -> None:
+def _paid_access_keyboard(subscription: Subscription):
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="📲 Подключить устройство",
+                    url=_connect_url(subscription),
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="👤 Моя подписка",
+                    callback_data="subscription:show",
+                ),
+                InlineKeyboardButton(
+                    text="💬 Поддержка",
+                    url=f"https://t.me/{settings.support_username.lstrip('@')}",
+                ),
+            ],
+        ]
+    )
+
+
+async def _fk_notify(
+    telegram_id: int,
+    plan_code: str,
+    days: int,
+    subscription: Subscription | None,
+) -> None:
+    if subscription is None:
+        await _tg_send(
+            telegram_id,
+            "✅ <b>Оплата получена.</b>\n\n"
+            "Автоматическая выдача не завершилась. Напишите в поддержку — "
+            "мы быстро активируем доступ вручную.",
+        )
+        return
+
     await _tg_send(
         telegram_id,
-        f"✅ <b>Оплата получена!</b>\nТариф «{FK_PLAN_NAMES.get(plan_code, plan_code)}» "
-        f"активирован на {days} дн. Откройте «Моя подписка» в боте.",
+        "✅ <b>Оплата получена — доступ активирован</b>\n\n"
+        f"Тариф — <b>{FK_PLAN_NAMES.get(plan_code, plan_code)}</b>\n"
+        f"Срок — <b>{days} дн.</b>\n"
+        f"Действует до — <b>{as_utc(subscription.expires_at).strftime('%d.%m.%Y')}</b>\n"
+        f"Лимит устройств — <b>{subscription.device_limit}</b>\n\n"
+        "Нажмите «📲 Подключить устройство» и добавьте подписку в приложение.",
+        reply_markup=_paid_access_keyboard(subscription),
     )
 
 
@@ -1235,7 +1288,7 @@ async def _fk_fulfill(order_id: str) -> None:
                     await db.commit()
                 except Exception:
                     pass
-        await _fk_notify(customer.telegram_id, tx.payload or "", days)
+        await _fk_notify(customer.telegram_id, tx.payload or "", days, sub)
         if ref_tg and ref_bonus:
             await _tg_send(
                 ref_tg,
