@@ -1145,6 +1145,7 @@ def _connect_url(subscription: Subscription) -> str:
 async def _tg_send(telegram_id: int, text: str, reply_markup=None) -> None:
     token = os.getenv("BOT_TOKEN", "")
     if not token:
+        logger.warning("Telegram notification skipped: BOT_TOKEN is not configured")
         return
     try:
         from aiogram import Bot
@@ -1159,7 +1160,7 @@ async def _tg_send(telegram_id: int, text: str, reply_markup=None) -> None:
         finally:
             await bot.session.close()
     except Exception:
-        pass
+        logger.exception("Could not send Telegram notification to %s", telegram_id)
 
 
 def _paid_access_keyboard(subscription: Subscription):
@@ -1375,24 +1376,54 @@ async def platega_webhook(
         tx.external_id = transaction_id
 
     if status == "CONFIRMED":
-        currency = str(payload.get("currency") or "").upper()
-        try:
-            amount = int(round(float(payload.get("amount"))))
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(400, "bad amount") from exc
-        if currency != tx.currency.upper() or amount != tx.amount:
-            logger.error(
-                "Platega amount mismatch",
-                extra={
-                    "transaction_id": transaction_id,
-                    "expected_amount": tx.amount,
-                    "actual_amount": payload.get("amount"),
-                    "expected_currency": tx.currency,
-                    "actual_currency": payload.get("currency"),
-                },
-            )
-            raise HTTPException(400, "amount mismatch")
         if tx.status != PaymentStatus.paid:
+            payment_details = payload.get("paymentDetails")
+            if not isinstance(payment_details, dict):
+                payment_details = {}
+
+            raw_amount = payload.get("amount", payment_details.get("amount"))
+            currency = str(
+                payload.get("currency") or payment_details.get("currency") or ""
+            ).upper()
+
+            if currency and currency != tx.currency.upper():
+                logger.error(
+                    "Platega currency mismatch transaction_id=%s expected=%s actual=%s",
+                    transaction_id,
+                    tx.currency,
+                    currency,
+                )
+                raise HTTPException(400, "currency mismatch")
+
+            if raw_amount is None:
+                logger.warning(
+                    "Platega confirmed callback without amount transaction_id=%s order_id=%s",
+                    transaction_id,
+                    tx.id,
+                )
+            else:
+                try:
+                    amount = int(round(float(raw_amount)))
+                except (TypeError, ValueError) as exc:
+                    raise HTTPException(400, "bad amount") from exc
+
+                if amount < tx.amount:
+                    logger.error(
+                        "Platega underpaid transaction_id=%s expected=%s actual=%s",
+                        transaction_id,
+                        tx.amount,
+                        raw_amount,
+                    )
+                    raise HTTPException(400, "amount mismatch")
+
+                if amount != tx.amount:
+                    logger.warning(
+                        "Platega amount differs but accepted transaction_id=%s expected=%s actual=%s",
+                        transaction_id,
+                        tx.amount,
+                        raw_amount,
+                    )
+
             tx.status = PaymentStatus.paid
             await db.commit()
             background.add_task(_fk_fulfill, tx.id)
