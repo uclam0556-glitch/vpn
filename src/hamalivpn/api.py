@@ -1114,9 +1114,27 @@ async def terms_page():
 
 
 # ── Payments: приём оплаты и автоматическая выдача подписки ──────────────────
-FK_PLAN_DAYS = {"1_month": 30, "2_months": 60, "3_months": 90, "6_months": 180}
-FK_PLAN_DEVICES = {"1_month": 1, "2_months": 3, "3_months": 5, "6_months": 5}
-FK_PLAN_NAMES = {"1_month": "1 месяц", "2_months": "2 месяца", "3_months": "3 месяца", "6_months": "6 месяцев"}
+FK_PLAN_DAYS = {
+    "1_month": 30,
+    "2_months": 60,
+    "3_months": 90,
+    "6_months": 180,
+    "12_months": 365,
+}
+FK_PLAN_DEVICES = {
+    "1_month": 1,
+    "2_months": 3,
+    "3_months": 5,
+    "6_months": 5,
+    "12_months": 5,
+}
+FK_PLAN_NAMES = {
+    "1_month": "1 месяц",
+    "2_months": "2 месяца",
+    "3_months": "3 месяца",
+    "6_months": "6 месяцев",
+    "12_months": "12 месяцев",
+}
 FK_REFERRAL_RATE = 0.30
 
 

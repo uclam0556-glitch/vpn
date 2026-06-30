@@ -41,6 +41,7 @@ PLANS = {
     "2_months": {"name": "2 месяца · 3 устройства", "price": 300, "days": 60, "devices": 3},
     "3_months": {"name": "3 месяца · 5 устройств", "price": 450, "days": 90, "devices": 5},
     "6_months": {"name": "6 месяцев · 5 устройств", "price": 700, "days": 180, "devices": 5},
+    "12_months": {"name": "12 месяцев · 5 устройств", "price": 1000, "days": 365, "devices": 5},
 }
 
 REFERRAL_RATE = 0.30  # доля пополнения, начисляемая пригласившему
