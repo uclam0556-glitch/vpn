@@ -314,6 +314,7 @@ async def get_user_servers(request: Request, user: dict = Depends(get_current_us
 
 from sqlalchemy import desc
 from datetime import timedelta
+from .device_limits import prune_hwid_devices_to_limit
 from .models import AuditLog, BalanceTransaction, Tariff, Subscription, SubscriptionStatus, as_utc, utcnow
 from .remnawave import make_remnawave_gateway
 
@@ -1207,6 +1208,12 @@ async def _fk_fulfill(order_id: str) -> None:
                     )
                     sub.subscription_url = remote.subscription_url
                     sub.remnawave_short_uuid = remote.short_uuid
+                    await prune_hwid_devices_to_limit(
+                        user_uuid=sub.remnawave_uuid,
+                        device_limit=sub.device_limit,
+                        list_devices=gateway.list_hwid_devices,
+                        delete_device=gateway.delete_hwid_device,
+                    )
                     await db.commit()
                 except Exception:
                     pass
@@ -1393,6 +1400,12 @@ async def update_reseller_client(uuid: str, req: UpdateDeviceLimitReq, user: dic
 
     gw = make_remnawave_gateway(get_settings())
     await gw.set_device_limit(uuid, req.devices_limit)
+    prune_result = await prune_hwid_devices_to_limit(
+        user_uuid=uuid,
+        device_limit=req.devices_limit,
+        list_devices=gw.list_hwid_devices,
+        delete_device=gw.delete_hwid_device,
+    )
     old_limit = sub.device_limit
     sub.device_limit = req.devices_limit
     await _audit(
@@ -1401,10 +1414,15 @@ async def update_reseller_client(uuid: str, req: UpdateDeviceLimitReq, user: dic
         "subscription.device_limit.updated",
         "subscription",
         sub.id,
-        {"remnawave_uuid": uuid, "old_limit": old_limit, "new_limit": req.devices_limit},
+        {
+            "remnawave_uuid": uuid,
+            "old_limit": old_limit,
+            "new_limit": req.devices_limit,
+            "pruned_devices": prune_result,
+        },
     )
     await db.commit()
-    return {"status": "ok", "device_limit": sub.device_limit}
+    return {"status": "ok", "device_limit": sub.device_limit, "pruned_devices": prune_result}
 
 
 @app.post("/api/reseller/clients/{uuid}/renew")
@@ -1446,6 +1464,12 @@ async def renew_reseller_client(
         traffic_limit_bytes=tariff.traffic_limit_gb * 1024**3,
         squads=settings.squad_uuids,
     )
+    prune_result = await prune_hwid_devices_to_limit(
+        user_uuid=uuid,
+        device_limit=tariff.device_limit,
+        list_devices=gw.list_hwid_devices,
+        delete_device=gw.delete_hwid_device,
+    )
 
     old_exp = sub.expires_at.isoformat() if sub.expires_at else None
     old_limit = sub.device_limit
@@ -1484,6 +1508,7 @@ async def renew_reseller_client(
             "new_expires_at": new_exp.isoformat(),
             "old_device_limit": old_limit,
             "new_device_limit": tariff.device_limit,
+            "pruned_devices": prune_result,
         },
     )
     await db.commit()

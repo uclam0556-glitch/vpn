@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from .config import get_settings
 from .db import SessionFactory
+from .device_limits import prune_hwid_devices_to_limit
 from .models import (
     BalanceTransaction,
     Customer,
@@ -259,6 +260,12 @@ async def successful_payment(message: Message) -> None:
                     )
                     subscription.subscription_url = remote.subscription_url
                     subscription.remnawave_short_uuid = remote.short_uuid
+                    await prune_hwid_devices_to_limit(
+                        user_uuid=subscription.remnawave_uuid,
+                        device_limit=subscription.device_limit,
+                        list_devices=gateway.list_hwid_devices,
+                        delete_device=gateway.delete_hwid_device,
+                    )
                     await session.commit()
                 except Exception:
                     logger.exception("Failed to update remnawave user expiration")
