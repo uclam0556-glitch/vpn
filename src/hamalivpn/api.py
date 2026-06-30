@@ -1113,7 +1113,7 @@ async def terms_page():
     return _doc_page("Пользовательское соглашение", _TERMS_BODY)
 
 
-# ── FreeKassa: приём оплаты и автоматическая выдача подписки ──────────────────
+# ── Payments: приём оплаты и автоматическая выдача подписки ──────────────────
 FK_PLAN_DAYS = {"1_month": 30, "2_months": 60, "3_months": 90, "6_months": 180}
 FK_PLAN_DEVICES = {"1_month": 1, "2_months": 3, "3_months": 5, "6_months": 5}
 FK_PLAN_NAMES = {"1_month": "1 месяц", "2_months": "2 месяца", "3_months": "3 месяца", "6_months": "6 месяцев"}
@@ -1253,6 +1253,91 @@ async def freekassa_webhook(request: Request, background: BackgroundTasks, db: A
     await db.commit()
     background.add_task(_fk_fulfill, order_id)
     return PlainTextResponse("YES")
+
+
+@app.post("/api/webhooks/platega")
+async def platega_webhook(
+    request: Request,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_session),
+    x_merchant_id: str | None = Header(default=None, alias="X-MerchantId"),
+    x_secret: str | None = Header(default=None, alias="X-Secret"),
+):
+    merchant_id = settings.platega_merchant_id.strip()
+    api_key = settings.platega_api_key.get_secret_value().strip()
+    if not merchant_id or not api_key:
+        raise HTTPException(503, "Platega not configured")
+    if not (
+        x_merchant_id
+        and x_secret
+        and hmac.compare_digest(x_merchant_id, merchant_id)
+        and hmac.compare_digest(x_secret, api_key)
+    ):
+        raise HTTPException(401, "bad platega headers")
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(400, "bad json") from exc
+
+    transaction_id = str(payload.get("id") or "")
+    local_order_id = str(payload.get("payload") or "")
+    if not transaction_id:
+        raise HTTPException(400, "missing transaction id")
+
+    conditions = [PaymentTransaction.external_id == transaction_id]
+    if local_order_id:
+        conditions.append(PaymentTransaction.id == local_order_id)
+    tx = (await db.execute(select(PaymentTransaction).where(or_(*conditions)).limit(1))).scalars().first()
+    if not tx:
+        logger.warning("Platega callback for unknown transaction", extra={"transaction_id": transaction_id})
+        return PlainTextResponse("OK")
+    if tx.provider != "platega":
+        logger.warning(
+            "Platega callback matched non-Platega transaction",
+            extra={"transaction_id": transaction_id, "provider": tx.provider},
+        )
+        return PlainTextResponse("OK")
+
+    status = str(payload.get("status") or "").upper()
+    if tx.external_id != transaction_id:
+        tx.external_id = transaction_id
+
+    if status == "CONFIRMED":
+        currency = str(payload.get("currency") or "").upper()
+        try:
+            amount = int(round(float(payload.get("amount"))))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, "bad amount") from exc
+        if currency != tx.currency.upper() or amount != tx.amount:
+            logger.error(
+                "Platega amount mismatch",
+                extra={
+                    "transaction_id": transaction_id,
+                    "expected_amount": tx.amount,
+                    "actual_amount": payload.get("amount"),
+                    "expected_currency": tx.currency,
+                    "actual_currency": payload.get("currency"),
+                },
+            )
+            raise HTTPException(400, "amount mismatch")
+        if tx.status != PaymentStatus.paid:
+            tx.status = PaymentStatus.paid
+            await db.commit()
+            background.add_task(_fk_fulfill, tx.id)
+        else:
+            await db.commit()
+        return PlainTextResponse("OK")
+
+    if status in {"CANCELED", "CANCELLED", "CHARGEBACKED"}:
+        if tx.status != PaymentStatus.paid:
+            tx.status = PaymentStatus.cancelled
+        await db.commit()
+        return PlainTextResponse("OK")
+
+    logger.warning("Platega callback with unknown status", extra={"transaction_id": transaction_id, "status": status})
+    await db.commit()
+    return PlainTextResponse("OK")
 
 
 @app.get("/api/internal/check_sub_limit")

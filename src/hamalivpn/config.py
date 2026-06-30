@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     premium_emoji_json: str = ""
     hysteria_legacy_password: SecretStr = SecretStr("")
     hysteria_legacy_nodes: str = "67.159.56.63,85.137.249.225,103.112.69.188,45.92.218.178,92.119.166.192"
+    platega_merchant_id: str = ""
+    platega_api_key: SecretStr = SecretStr("")
+    platega_api_base_url: str = "https://app.platega.io"
 
     @property
     def admin_ids(self) -> set[int]:
