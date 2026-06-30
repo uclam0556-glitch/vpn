@@ -1,60 +1,58 @@
 {$PUBLIC_HOST} {
-    encode zstd gzip
-    reverse_proxy control:8080
+	encode zstd gzip
+	reverse_proxy control:8080
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "DENY"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        -Server
-    }
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
 }
 
 {$PANEL_HOST} {
-    encode zstd gzip
+	encode zstd gzip
 
+	handle {
+		@nobypass {
+			not header X-Proxy-Bypass true
+			path /api/sub/*
+		}
+		handle @nobypass {
+			reverse_proxy 172.17.0.1:8000
+		}
 
+		reverse_proxy remnawave:3000
+	}
 
-    handle {
-    @nobypass {
-        not header X-Proxy-Bypass true
-        path /api/sub/*
-    }
-    handle @nobypass {
-        reverse_proxy 172.17.0.1:8000
-    }
-
-        reverse_proxy remnawave:3000
-    }
-
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options "nosniff"
-        X-Frame-Options "SAMEORIGIN"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        -Server
-    }
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
 }
 
 {$CABINET_HOST}, {$CABINET_FALLBACK_HOST}, portal.hamali.ru {
-    encode zstd gzip
-    reverse_proxy 172.17.0.1:8001
+	encode zstd gzip
+	reverse_proxy 172.17.0.1:8001
 
-    header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
-        X-Content-Type-Options "nosniff"
-        Referrer-Policy "strict-origin-when-cross-origin"
-        Permissions-Policy "camera=(), microphone=(), geolocation=()"
-        -Server
-    }
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
 }
 
 de.hamali.ru {
-    reverse_proxy 92.119.166.192:8080
+	reverse_proxy 92.119.166.192:8080
 }
 
 http://app.hamali.ru {
-    reverse_proxy 172.17.0.1:8001
+	reverse_proxy 172.17.0.1:8001
 }
