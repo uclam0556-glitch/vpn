@@ -4,7 +4,33 @@ from hamalivpn.device_limits import prune_hwid_devices_to_limit
 
 
 @pytest.mark.asyncio
-async def test_prune_hwid_devices_keeps_newest_slots() -> None:
+async def test_prune_hwid_devices_keeps_first_activated_slots_by_default() -> None:
+    deleted: list[str] = []
+    devices = [
+        {"hwid": "first", "createdAt": "2026-06-01T10:00:00.000Z", "updatedAt": "2026-06-03T10:00:00.000Z"},
+        {"hwid": "second", "createdAt": "2026-06-02T10:00:00.000Z", "updatedAt": "2026-06-02T10:00:00.000Z"},
+        {"hwid": "third", "createdAt": "2026-06-03T10:00:00.000Z", "updatedAt": "2026-06-01T10:00:00.000Z"},
+    ]
+
+    async def list_devices(_: str) -> list[dict]:
+        return devices
+
+    async def delete_device(_: str, hwid: str) -> None:
+        deleted.append(hwid)
+
+    result = await prune_hwid_devices_to_limit(
+        user_uuid="user-uuid",
+        device_limit=2,
+        list_devices=list_devices,
+        delete_device=delete_device,
+    )
+
+    assert result == {"before_count": 3, "removed_count": 1, "kept_count": 2}
+    assert deleted == ["third"]
+
+
+@pytest.mark.asyncio
+async def test_prune_hwid_devices_can_keep_newest_slots() -> None:
     deleted: list[str] = []
     devices = [
         {"hwid": "old", "updatedAt": "2026-06-01T10:00:00.000Z"},
@@ -23,6 +49,7 @@ async def test_prune_hwid_devices_keeps_newest_slots() -> None:
         device_limit=2,
         list_devices=list_devices,
         delete_device=delete_device,
+        keep="newest",
     )
 
     assert result == {"before_count": 3, "removed_count": 1, "kept_count": 2}

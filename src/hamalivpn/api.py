@@ -1522,8 +1522,16 @@ async def get_reseller_client_devices(
     sub, _, _ = await _client_sub_for_agent(uuid, user, db)
     gw = make_remnawave_gateway(get_settings())
     try:
+        await prune_hwid_devices_to_limit(
+            user_uuid=uuid,
+            device_limit=sub.device_limit,
+            list_devices=gw.list_hwid_devices,
+            delete_device=gw.delete_hwid_device,
+            keep="oldest",
+        )
         devices = await gw.list_hwid_devices(uuid)
     except Exception:
+        logger.exception("Could not sync Remnawave HWID devices", extra={"subscription_id": sub.id})
         devices = []
     return {"device_limit": sub.device_limit, "count": len(devices), "devices": devices}
 
@@ -1800,6 +1808,17 @@ class HysteriaAuthRequest(BaseModel):
     tx: int = 0
 
 
+def _hysteria_client_ip(req: HysteriaAuthRequest, request: Request) -> str:
+    raw = (req.addr or "").strip()
+    if raw.startswith("[") and "]" in raw:
+        return raw[1 : raw.index("]")]
+    if raw.count(":") == 1 and "." in raw:
+        return raw.rsplit(":", 1)[0]
+    if raw:
+        return raw
+    return _client_ip(request)
+
+
 @app.post("/hysteria/auth")
 async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSession = Depends(get_session)):
     # Emergency-safe mode for standalone Hysteria2.
@@ -1829,6 +1848,27 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
     ).scalars().first()
 
     if not sub or sub.status != SubscriptionStatus.active or as_utc(sub.expires_at) <= utcnow():
+        return {"ok": False, "id": ""}
+
+    client_ip = _hysteria_client_ip(req, request)
+    redis_key = f"hysteria:devices:{sub.id}"
+    unique_ips, backend = await _rolling_unique_ips(
+        redis_key,
+        client_ip,
+        int(time.time()),
+        window_seconds=3600,
+    )
+    if unique_ips > sub.device_limit:
+        await _remove_rolling_ip(redis_key, client_ip)
+        logger.info(
+            "Hysteria device limit reached",
+            extra={
+                "subscription_id": sub.id,
+                "device_limit": sub.device_limit,
+                "unique_ips": unique_ips,
+                "backend": backend,
+            },
+        )
         return {"ok": False, "id": ""}
 
     return {"ok": True, "id": f"sub_{sub.id}"}

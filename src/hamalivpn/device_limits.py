@@ -26,6 +26,13 @@ def _device_updated_key(device: dict[str, Any]) -> tuple[datetime, datetime]:
     )
 
 
+def _device_created_key(device: dict[str, Any]) -> tuple[datetime, datetime]:
+    return (
+        _parse_device_time(device.get("createdAt") or device.get("created_at")),
+        _parse_device_time(device.get("updatedAt") or device.get("updated_at")),
+    )
+
+
 def _device_hwid(device: dict[str, Any]) -> str:
     return str(
         device.get("hwid")
@@ -42,13 +49,14 @@ async def prune_hwid_devices_to_limit(
     device_limit: int,
     list_devices: Callable[[str], Awaitable[list[dict[str, Any]]]],
     delete_device: Callable[[str, str], Awaitable[None]],
+    keep: str = "oldest",
 ) -> dict[str, int]:
-    """Remove old Remnawave HWID slots when a subscription limit is lowered.
+    """Remove extra Remnawave HWID slots when a subscription limit is exceeded.
 
-    Remnawave can keep historical HWID entries after the user moves between
-    clients/apps or after an admin lowers the limit. We keep the newest slots
-    and remove only the older extras, so the most recently used devices stay
-    connected.
+    The default policy is strict commercial licensing: the first activated
+    devices keep their slots and later devices are removed. This makes a
+    "1 device" tariff behave as a real device lock instead of "who connected
+    last wins". For admin-driven migrations, callers may pass keep="newest".
     """
 
     limit = max(1, int(device_limit or 1))
@@ -62,7 +70,10 @@ async def prune_hwid_devices_to_limit(
     if before_count <= limit:
         return {"before_count": before_count, "removed_count": 0, "kept_count": before_count}
 
-    devices.sort(key=_device_updated_key, reverse=True)
+    if keep == "newest":
+        devices.sort(key=_device_updated_key, reverse=True)
+    else:
+        devices.sort(key=_device_created_key)
     stale_devices = devices[limit:]
 
     removed_count = 0

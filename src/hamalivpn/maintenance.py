@@ -7,12 +7,17 @@ from sqlalchemy import select
 
 from .config import get_settings
 from .db import SessionFactory, create_schema
+from .device_limits import prune_hwid_devices_to_limit
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
 from .premium_emoji import ce
 from .remnawave import RemnawaveError, make_remnawave_gateway
 from .services import check_due_subscription_health, expire_due_subscriptions
 
 logger = logging.getLogger(__name__)
+
+_HWID_ENFORCE_INTERVAL_SECONDS = 60
+_HWID_ENFORCE_BATCH_SIZE = 100
+_last_hwid_enforce_at: datetime | None = None
 
 
 def _connect_url(settings, subscription: Subscription) -> str:
@@ -149,6 +154,72 @@ async def send_expiry_reminders(session, settings) -> int:
     return sent
 
 
+async def enforce_hwid_device_limits(session, gateway) -> int:
+    """Strictly prune Remnawave HWID slots to the tariff device limit.
+
+    Remnawave may keep historical HWID slots even when hwidDeviceLimit is lower.
+    HamaliVPN's commercial rule is stricter: the first activated devices keep
+    their slots; later devices are removed until the owner/reseller manually
+    deletes an old device.
+    """
+
+    global _last_hwid_enforce_at
+
+    now = datetime.now(UTC)
+    if (
+        _last_hwid_enforce_at is not None
+        and (now - _last_hwid_enforce_at).total_seconds() < _HWID_ENFORCE_INTERVAL_SECONDS
+    ):
+        return 0
+    _last_hwid_enforce_at = now
+
+    rows = (
+        await session.execute(
+            select(Subscription)
+            .where(
+                Subscription.status == SubscriptionStatus.active,
+                Subscription.expires_at > now,
+                Subscription.remnawave_uuid.is_not(None),
+                Subscription.device_limit >= 1,
+            )
+            .order_by(Subscription.updated_at.desc())
+            .limit(_HWID_ENFORCE_BATCH_SIZE)
+        )
+    ).scalars().all()
+
+    pruned = 0
+    for subscription in rows:
+        result = await prune_hwid_devices_to_limit(
+            user_uuid=subscription.remnawave_uuid,
+            device_limit=subscription.device_limit,
+            list_devices=gateway.list_hwid_devices,
+            delete_device=gateway.delete_hwid_device,
+            keep="oldest",
+        )
+        removed_count = result.get("removed_count", 0)
+        if not removed_count:
+            continue
+        pruned += removed_count
+        session.add(
+            AuditLog(
+                actor="system:maintenance",
+                action="subscription.devices.pruned",
+                entity_type="subscription",
+                entity_id=subscription.id,
+                details={
+                    "remnawave_uuid": subscription.remnawave_uuid,
+                    "device_limit": subscription.device_limit,
+                    "result": result,
+                    "policy": "keep_first_activated",
+                },
+            )
+        )
+
+    if pruned:
+        await session.commit()
+    return pruned
+
+
 async def main() -> None:
     settings = get_settings()
     logging.basicConfig(
@@ -170,6 +241,9 @@ async def main() -> None:
                 reminded = await send_expiry_reminders(session, settings)
                 if reminded:
                     logger.info("Sent %s expiry reminders", reminded)
+                pruned = await enforce_hwid_device_limits(session, gateway)
+                if pruned:
+                    logger.info("Pruned %s extra HWID devices", pruned)
         except RemnawaveError:
             logger.exception("Maintenance could not reach Remnawave")
         except Exception:
