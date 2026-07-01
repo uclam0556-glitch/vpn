@@ -1478,6 +1478,46 @@ async def check_sub_limit(short_uuid: str, ip: str, db: AsyncSession = Depends(g
     }
 
 
+@app.get("/api/internal/subscription_meta")
+async def subscription_meta(token: str, db: AsyncSession = Depends(get_session)):
+    """Small read-only helper for the local subscription injector.
+
+    The injector must know the tariff device limit before it adds optional
+    Hysteria profiles. Hysteria does not expose a stable device HWID like
+    Remnawave/VLESS, so strict one-device plans must not receive Hysteria
+    profiles at all.
+    """
+    token = (token or "").strip()
+    if not token:
+        return {"active": False, "device_limit": 0, "reason": "empty_token"}
+
+    sub = (
+        await db.execute(
+            select(Subscription).filter(
+                or_(
+                    Subscription.remnawave_short_uuid == token,
+                    Subscription.remnawave_uuid == token,
+                    Subscription.access_token == token,
+                )
+            )
+        )
+    ).scalars().first()
+
+    if not sub:
+        return {"active": False, "device_limit": 0, "reason": "not_found"}
+
+    active = bool(
+        sub.status == SubscriptionStatus.active
+        and sub.expires_at
+        and as_utc(sub.expires_at) > utcnow()
+    )
+    return {
+        "active": active,
+        "device_limit": int(sub.device_limit or 1),
+        "expires_at": sub.expires_at.isoformat() if sub.expires_at else None,
+    }
+
+
 PACKAGE_DIR = os.path.dirname(__file__)
 PORTAL_DIST_DIR = os.getenv("PORTAL_DIST_DIR", "/opt/hamalivpn/portal-webapp/dist")
 if not os.path.isdir(PORTAL_DIST_DIR):
@@ -1821,11 +1861,10 @@ def _hysteria_client_ip(req: HysteriaAuthRequest, request: Request) -> str:
 
 @app.post("/hysteria/auth")
 async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSession = Depends(get_session)):
-    # Emergency-safe mode for standalone Hysteria2.
-    #
-    # Hiddify/V2Ray clients show Hysteria nodes as "n/a" when this auth endpoint
-    # returns {"ok": false}. Device limiting for Hysteria is intentionally kept
-    # out of the hot path for now; Remnawave/VLESS HWID limits remain enforced.
+    # Standalone Hysteria2 has no stable per-device HWID like Remnawave/VLESS.
+    # For strict one-device subscriptions we do not allow Hysteria at all:
+    # otherwise two devices behind the same home/mobile NAT may look like one.
+    # Multi-device plans still get a best-effort rolling-IP guard below.
     #
     # Legacy UK/London nodes still use the shared Hysteria password injected only
     # into active subscription documents. Accept it only from our known node IPs
@@ -1848,6 +1887,13 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
     ).scalars().first()
 
     if not sub or sub.status != SubscriptionStatus.active or as_utc(sub.expires_at) <= utcnow():
+        return {"ok": False, "id": ""}
+
+    if int(sub.device_limit or 1) <= 1:
+        logger.info(
+            "Hysteria disabled for strict one-device subscription",
+            extra={"subscription_id": sub.id},
+        )
         return {"ok": False, "id": ""}
 
     client_ip = _hysteria_client_ip(req, request)
