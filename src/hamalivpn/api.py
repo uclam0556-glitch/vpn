@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Header, Re
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, or_, select
@@ -314,9 +315,37 @@ async def get_user_servers(request: Request, user: dict = Depends(get_current_us
 
 from sqlalchemy import desc
 from datetime import timedelta
+from .deeplinks import (
+    happ_deeplink,
+    hiddify_deeplink,
+    incy_deeplink,
+    streisand_deeplink,
+    v2raytun_deeplink,
+)
 from .device_limits import prune_hwid_devices_to_limit
-from .models import AuditLog, BalanceTransaction, Tariff, Subscription, SubscriptionStatus, as_utc, utcnow
+from .device_slots import (
+    DeviceLimitReached,
+    active_device_slots,
+    active_device_slot_count,
+    deactivate_device_slot,
+    deactivate_subscription_slots,
+    device_subscription_url,
+    ensure_device_slot,
+    sync_subscription_device_slots,
+)
+from .models import (
+    AuditLog,
+    BalanceTransaction,
+    Tariff,
+    Subscription,
+    SubscriptionDevice,
+    SubscriptionStatus,
+    as_utc,
+    utcnow,
+)
+from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
+from .services import get_subscription_by_token
 
 class BuyKeyRequest(BaseModel):
     tariff_id: int
@@ -863,6 +892,7 @@ async def admin_disable_key(uuid: str, user: dict = Depends(get_portal_user), db
         await gw.disable_user(uuid)
     except Exception:
         pass
+    await deactivate_subscription_slots(db, gw, sub, actor=_actor(admin))
     sub.status = SubscriptionStatus.disabled
     await _audit(db, admin, "admin.key.disabled", "subscription", sub.id, {"remnawave_uuid": uuid})
     await db.commit()
@@ -1286,6 +1316,13 @@ async def _fk_fulfill(order_id: str) -> None:
                         list_devices=gateway.list_hwid_devices,
                         delete_device=gateway.delete_hwid_device,
                     )
+                    await sync_subscription_device_slots(
+                        db,
+                        gateway,
+                        settings,
+                        sub,
+                        actor="system:payment:freekassa",
+                    )
                     await db.commit()
                 except Exception:
                     pass
@@ -1489,6 +1526,29 @@ async def subscription_meta(token: str, db: AsyncSession = Depends(get_session))
     if not token:
         return {"active": False, "device_limit": 0, "reason": "empty_token"}
 
+    slot = await db.scalar(select(SubscriptionDevice).where(SubscriptionDevice.device_token == token))
+    if slot:
+        sub = await db.get(Subscription, slot.subscription_id)
+        active = bool(
+            slot.is_active
+            and sub
+            and sub.status == SubscriptionStatus.active
+            and sub.expires_at
+            and as_utc(sub.expires_at) > utcnow()
+        )
+        return {
+            "active": active,
+            "kind": "device",
+            "device_limit": 1,
+            "subscription_id": sub.id if sub else None,
+            "device_slot_id": slot.id,
+            "target_token": slot.remnawave_short_uuid or slot.remnawave_uuid or token,
+            "auth_token": slot.device_token,
+            "remnawave_uuid": slot.remnawave_uuid,
+            "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
+            "reason": None if active else "inactive_device_slot",
+        }
+
     sub = (
         await db.execute(
             select(Subscription).filter(
@@ -1511,18 +1571,103 @@ async def subscription_meta(token: str, db: AsyncSession = Depends(get_session))
     )
     return {
         "active": active,
+        "kind": "subscription",
         "device_limit": int(sub.device_limit or 1),
+        "subscription_id": sub.id,
+        "target_token": sub.remnawave_short_uuid or sub.remnawave_uuid or token,
+        "auth_token": token,
+        "remnawave_uuid": sub.remnawave_uuid,
         "expires_at": sub.expires_at.isoformat() if sub.expires_at else None,
     }
 
 
 PACKAGE_DIR = os.path.dirname(__file__)
+CONNECT_TEMPLATES = Jinja2Templates(directory=os.path.join(PACKAGE_DIR, "templates"))
 PORTAL_DIST_DIR = os.getenv("PORTAL_DIST_DIR", "/opt/hamalivpn/portal-webapp/dist")
 if not os.path.isdir(PORTAL_DIST_DIR):
     PORTAL_DIST_DIR = os.path.join(PACKAGE_DIR, "portal_web")
 PORTAL_ASSETS_DIR = os.path.join(PORTAL_DIST_DIR, "assets")
 if os.path.isdir(PORTAL_ASSETS_DIR):
     app.mount("/portal/assets", StaticFiles(directory=PORTAL_ASSETS_DIR), name="portal_assets")
+
+
+@app.get("/connect/{access_token}", response_class=HTMLResponse)
+async def public_connect_page(
+    request: Request,
+    access_token: str,
+    db: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    """Public device activation page used by the bot and reseller portal.
+
+    The partner portal API is what app.hamali.ru/portal.hamali.ru actually
+    serves in production. Keeping the route here ensures every generated
+    connect link passes through device slots instead of falling into the SPA
+    catch-all and bypassing the new per-device subscription URLs.
+    """
+
+    subscription = await get_subscription_by_token(db, access_token)
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    expires_at = as_utc(subscription.expires_at)
+    expired = expires_at <= utcnow()
+    subscription_url = ""
+    slot = None
+    limit_reached = False
+    device_slots_used = 0
+
+    if not expired:
+        cookie_name = f"hamali_slot_{subscription.id}"
+        gateway = make_remnawave_gateway(settings)
+        try:
+            slot = await ensure_device_slot(
+                db,
+                gateway,
+                settings,
+                subscription,
+                existing_token=request.cookies.get(cookie_name),
+                client_ip=_client_ip(request),
+                user_agent=request.headers.get("User-Agent", ""),
+            )
+            subscription_url = device_subscription_url(settings, subscription, slot)
+            await db.commit()
+        except DeviceLimitReached:
+            limit_reached = True
+            device_slots_used = await active_device_slot_count(db, subscription.id)
+
+    response = CONNECT_TEMPLATES.TemplateResponse(
+        request,
+        "connect.html",
+        {
+            "subscription": subscription,
+            "subscription_url": subscription_url,
+            "qr": qr_data_uri(subscription_url) if subscription_url else None,
+            "hiddify_link": hiddify_deeplink(subscription_url, settings.subscription_name),
+            "v2raytun_link": v2raytun_deeplink(subscription_url),
+            "happ_link": happ_deeplink(subscription_url),
+            "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
+            "streisand_link": streisand_deeplink(subscription_url),
+            "expired": expired,
+            "limit_reached": limit_reached,
+            "device_slot": slot,
+            "device_slots_used": device_slots_used,
+            "support_username": settings.support_username,
+            "health_status": subscription.health_status,
+            "health_message": subscription.health_message,
+            "endpoint_count": subscription.health_endpoint_count,
+        },
+    )
+    if slot:
+        max_age = max(60, int((expires_at - utcnow()).total_seconds()))
+        response.set_cookie(
+            f"hamali_slot_{subscription.id}",
+            slot.device_token,
+            max_age=max_age,
+            httponly=True,
+            secure=settings.secure_cookies,
+            samesite="lax",
+        )
+    return response
 
 @app.get("/portal")
 @app.get("/portal/{full_path:path}")
@@ -1559,6 +1704,20 @@ async def get_reseller_client_devices(
 ):
     sub, _, _ = await _client_sub_for_agent(uuid, user, db)
     gw = make_remnawave_gateway(get_settings())
+    slots = await active_device_slots(db, sub.id)
+    slot_devices = [
+        {
+            "id": f"slot:{slot.id}",
+            "hwid": f"slot:{slot.id}",
+            "deviceModel": slot.label or "Устройство",
+            "platform": slot.platform or "Device slot",
+            "userAgent": slot.user_agent or "",
+            "updatedAt": (slot.last_seen_at or slot.created_at).isoformat() if (slot.last_seen_at or slot.created_at) else None,
+            "slot": True,
+            "lastIp": slot.last_ip,
+        }
+        for slot in slots
+    ]
     try:
         await prune_hwid_devices_to_limit(
             user_uuid=uuid,
@@ -1571,7 +1730,13 @@ async def get_reseller_client_devices(
     except Exception:
         logger.exception("Could not sync Remnawave HWID devices", extra={"subscription_id": sub.id})
         devices = []
-    return {"device_limit": sub.device_limit, "count": len(devices), "devices": devices}
+    display_devices = slot_devices if slot_devices else devices
+    return {
+        "device_limit": sub.device_limit,
+        "count": len(display_devices),
+        "devices": display_devices,
+        "slots": slot_devices,
+    }
 
 
 @app.post("/api/reseller/clients/{uuid}/devices/delete")
@@ -1583,6 +1748,18 @@ async def delete_reseller_client_device(
 ):
     sub, _, actor = await _client_sub_for_agent(uuid, user, db)
     gw = make_remnawave_gateway(get_settings())
+    if req.hwid.startswith("slot:"):
+        try:
+            slot_id = int(req.hwid.split(":", 1)[1])
+        except ValueError:
+            raise HTTPException(400, "Invalid device slot") from None
+        slot = await db.get(SubscriptionDevice, slot_id)
+        if not slot or slot.subscription_id != sub.id:
+            raise HTTPException(404, "Device slot not found")
+        await deactivate_device_slot(db, gw, slot, actor=_actor(actor))
+        await db.commit()
+        return {"status": "ok"}
+
     await gw.delete_hwid_device(uuid, req.hwid)
     await _audit(
         db,
@@ -1611,6 +1788,7 @@ async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_
         raise HTTPException(403)
         
     clients = (await db.execute(select(Customer).options(selectinload(Customer.subscriptions)).filter_by(referrer_id=reseller_id).order_by(desc(Customer.created_at)))).scalars().all()
+    base = get_settings().public_base_url.rstrip("/")
     res = []
     for c in clients:
         sub = next((s for s in c.subscriptions if str(s.status).split('.')[-1] == "active"), None)
@@ -1622,6 +1800,7 @@ async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_
             "sub_status": str(sub.status).split('.')[-1] if sub else "none",
             "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
             "sub_url": sub.subscription_url if sub else None,
+            "connect_url": f"{base}/connect/{sub.access_token}" if sub and sub.access_token else None,
             "remnawave_uuid": sub.remnawave_uuid if sub else None,
             "device_limit": sub.device_limit if sub else 0
         })
@@ -1631,7 +1810,8 @@ async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_
 async def update_reseller_client(uuid: str, req: UpdateDeviceLimitReq, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
     sub, _, actor = await _client_sub_for_agent(uuid, user, db)
 
-    gw = make_remnawave_gateway(get_settings())
+    settings = get_settings()
+    gw = make_remnawave_gateway(settings)
     await gw.set_device_limit(uuid, req.devices_limit)
     prune_result = await prune_hwid_devices_to_limit(
         user_uuid=uuid,
@@ -1641,6 +1821,13 @@ async def update_reseller_client(uuid: str, req: UpdateDeviceLimitReq, user: dic
     )
     old_limit = sub.device_limit
     sub.device_limit = req.devices_limit
+    slot_sync = await sync_subscription_device_slots(
+        db,
+        gw,
+        settings,
+        sub,
+        actor=_actor(actor),
+    )
     await _audit(
         db,
         actor,
@@ -1652,10 +1839,16 @@ async def update_reseller_client(uuid: str, req: UpdateDeviceLimitReq, user: dic
             "old_limit": old_limit,
             "new_limit": req.devices_limit,
             "pruned_devices": prune_result,
+            "slot_sync": slot_sync,
         },
     )
     await db.commit()
-    return {"status": "ok", "device_limit": sub.device_limit, "pruned_devices": prune_result}
+    return {
+        "status": "ok",
+        "device_limit": sub.device_limit,
+        "pruned_devices": prune_result,
+        "slot_sync": slot_sync,
+    }
 
 
 @app.post("/api/reseller/clients/{uuid}/renew")
@@ -1713,6 +1906,13 @@ async def renew_reseller_client(
     sub.traffic_limit_gb = tariff.traffic_limit_gb
     sub.subscription_url = remote.subscription_url
     sub.remnawave_short_uuid = remote.short_uuid
+    slot_sync = await sync_subscription_device_slots(
+        db,
+        gw,
+        settings,
+        sub,
+        actor=_actor(actor),
+    )
 
     if actor.role != "super_admin":
         actor.balance_rub -= tariff.price_rub
@@ -1742,6 +1942,7 @@ async def renew_reseller_client(
             "old_device_limit": old_limit,
             "new_device_limit": tariff.device_limit,
             "pruned_devices": prune_result,
+            "slot_sync": slot_sync,
         },
     )
     await db.commit()
@@ -1764,6 +1965,7 @@ async def delete_reseller_client(uuid: str, user: dict = Depends(get_portal_user
     except Exception:
         await gw.disable_user(user_uuid=uuid)
         
+    await deactivate_subscription_slots(db, gw, sub, actor=_actor(agent))
     sub.status = SubscriptionStatus.revoked
     await _audit(
         db,
@@ -1872,6 +2074,46 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
     if legacy_password and req.auth == legacy_password and request.client and request.client.host in legacy_nodes:
         return {"ok": True, "id": "legacy_hysteria"}
 
+    client_ip = _hysteria_client_ip(req, request)
+
+    slot = await db.scalar(select(SubscriptionDevice).where(SubscriptionDevice.device_token == req.auth))
+    if slot:
+        sub = await db.get(Subscription, slot.subscription_id)
+        if not (
+            slot.is_active
+            and sub
+            and sub.status == SubscriptionStatus.active
+            and as_utc(sub.expires_at) > utcnow()
+        ):
+            return {"ok": False, "id": ""}
+
+        redis_key = f"hysteria:slot:{slot.id}"
+        unique_ips, backend = await _rolling_unique_ips(
+            redis_key,
+            client_ip,
+            int(time.time()),
+            window_seconds=3600,
+        )
+        if unique_ips > 1:
+            await _remove_rolling_ip(redis_key, client_ip)
+            logger.info(
+                "Hysteria device slot reused from another IP",
+                extra={
+                    "subscription_id": sub.id,
+                    "slot_id": slot.id,
+                    "unique_ips": unique_ips,
+                    "backend": backend,
+                },
+            )
+            return {"ok": False, "id": ""}
+
+        if not slot.first_ip:
+            slot.first_ip = client_ip
+        slot.last_ip = client_ip
+        slot.last_seen_at = utcnow()
+        await db.commit()
+        return {"ok": True, "id": f"slot_{slot.id}"}
+
     sub = (
         await db.execute(
             select(Subscription).filter(
@@ -1887,7 +2129,6 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
     if not sub or sub.status != SubscriptionStatus.active or as_utc(sub.expires_at) <= utcnow():
         return {"ok": False, "id": ""}
 
-    client_ip = _hysteria_client_ip(req, request)
     redis_key = f"hysteria:devices:{sub.id}"
     unique_ips, backend = await _rolling_unique_ips(
         redis_key,

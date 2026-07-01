@@ -23,6 +23,12 @@ from .deeplinks import (
     streisand_deeplink,
     v2raytun_deeplink,
 )
+from .device_slots import (
+    DeviceLimitReached,
+    active_device_slot_count,
+    device_subscription_url,
+    ensure_device_slot,
+)
 from .models import AuditLog, Customer, Subscription, as_utc
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
@@ -70,6 +76,14 @@ def admin_guard(request: Request) -> RedirectResponse | None:
     return None
 
 
+def client_ip(request: Request) -> str:
+    return (
+        request.headers.get("CF-Connecting-IP")
+        or request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "")
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
@@ -98,9 +112,33 @@ async def connect_page(
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription not found")
 
-    subscription_url = subscription.subscription_url or ""
     expires_at = as_utc(subscription.expires_at)
-    return templates.TemplateResponse(
+    expired = expires_at <= datetime.now(UTC)
+    subscription_url = ""
+    slot = None
+    limit_reached = False
+    device_slots_used = 0
+
+    if not expired:
+        cookie_name = f"hamali_slot_{subscription.id}"
+        gateway = make_remnawave_gateway(settings)
+        try:
+            slot = await ensure_device_slot(
+                session,
+                gateway,
+                settings,
+                subscription,
+                existing_token=request.cookies.get(cookie_name),
+                client_ip=client_ip(request),
+                user_agent=request.headers.get("User-Agent", ""),
+            )
+            subscription_url = device_subscription_url(settings, subscription, slot)
+            await session.commit()
+        except DeviceLimitReached:
+            limit_reached = True
+            device_slots_used = await active_device_slot_count(session, subscription.id)
+
+    response = templates.TemplateResponse(
         request,
         "connect.html",
         {
@@ -112,13 +150,27 @@ async def connect_page(
             "happ_link": happ_deeplink(subscription_url),
             "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
             "streisand_link": streisand_deeplink(subscription_url),
-            "expired": expires_at <= datetime.now(UTC),
+            "expired": expired,
+            "limit_reached": limit_reached,
+            "device_slot": slot,
+            "device_slots_used": device_slots_used,
             "support_username": settings.support_username,
             "health_status": subscription.health_status,
             "health_message": subscription.health_message,
             "endpoint_count": subscription.health_endpoint_count,
         },
     )
+    if slot:
+        max_age = max(60, int((expires_at - datetime.now(UTC)).total_seconds()))
+        response.set_cookie(
+            f"hamali_slot_{subscription.id}",
+            slot.device_token,
+            max_age=max_age,
+            httponly=True,
+            secure=settings.secure_cookies,
+            samesite="lax",
+        )
+    return response
 
 
 @app.get("/demo/sub/{short_uuid}", response_class=PlainTextResponse)

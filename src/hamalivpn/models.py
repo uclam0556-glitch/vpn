@@ -97,10 +97,40 @@ class Subscription(Base):
     )
 
     customer: Mapped[Customer] = relationship(back_populates="subscriptions")
+    devices: Mapped[list["SubscriptionDevice"]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
 
     @property
     def is_active(self) -> bool:
         return self.status == SubscriptionStatus.active and as_utc(self.expires_at) > utcnow()
+
+
+class SubscriptionDevice(Base):
+    __tablename__ = "subscription_devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subscription_id: Mapped[str] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), index=True
+    )
+    device_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    label: Mapped[str] = mapped_column(String(80), default="Устройство")
+    platform: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    remnawave_uuid: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True)
+    remnawave_short_uuid: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    subscription_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    first_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    subscription: Mapped[Subscription] = relationship(back_populates="devices")
 
 
 class AuditLog(Base):

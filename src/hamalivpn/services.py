@@ -5,6 +5,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings
+from .device_slots import deactivate_subscription_slots, sync_subscription_device_slots
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
 from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 from .schemas import TrialResult
@@ -110,6 +111,13 @@ async def issue_trial(
         existing.subscription_url = remote.subscription_url
         existing.remnawave_short_uuid = remote.short_uuid
         existing.remnawave_uuid = remote.uuid
+        await sync_subscription_device_slots(
+            session,
+            gateway,
+            settings,
+            existing,
+            actor=f"telegram:{telegram_id}",
+        )
         session.add(
             AuditLog(
                 actor=f"telegram:{telegram_id}",
@@ -275,6 +283,13 @@ async def refresh_subscription_access(
     subscription.expires_at = expires_at
     subscription.subscription_url = remote.subscription_url
     subscription.remnawave_short_uuid = remote.short_uuid
+    await sync_subscription_device_slots(
+        session,
+        gateway,
+        settings,
+        subscription,
+        actor=actor,
+    )
     session.add(
         AuditLog(
             actor=actor,
@@ -354,6 +369,7 @@ async def disable_subscription(
         raise SubscriptionNotFoundError
     if subscription.remnawave_uuid:
         await gateway.disable_user(subscription.remnawave_uuid)
+    await deactivate_subscription_slots(session, gateway, subscription, actor=actor)
     subscription.status = SubscriptionStatus.disabled
     session.add(
         AuditLog(

@@ -20,6 +20,7 @@ from sqlalchemy import select
 from .config import get_settings
 from .db import SessionFactory
 from .device_limits import prune_hwid_devices_to_limit
+from .device_slots import sync_subscription_device_slots
 from .models import (
     BalanceTransaction,
     Customer,
@@ -407,6 +408,13 @@ async def successful_payment(message: Message) -> None:
                         device_limit=subscription.device_limit,
                         list_devices=gateway.list_hwid_devices,
                         delete_device=gateway.delete_hwid_device,
+                    )
+                    await sync_subscription_device_slots(
+                        session,
+                        gateway,
+                        settings,
+                        subscription,
+                        actor="system:payment:telegram",
                     )
                     await session.commit()
                 except Exception:

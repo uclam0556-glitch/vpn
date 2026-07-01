@@ -22,11 +22,33 @@
     </a>
   </div>
 
+  {% elif limit_reached %}
+  <!-- DEVICE LIMIT STATE -->
+  <div class="cv2-expired">
+    <div class="cv2-expired-icon">📱</div>
+    <h1>Лимит устройств достигнут</h1>
+    <p>
+      Для этой подписки доступно устройств: <b>{{ subscription.device_limit }}</b>.
+      Все слоты уже заняты, поэтому новая ссылка не выдана.
+    </p>
+    <p>
+      Если вы меняете телефон или компьютер — напишите в поддержку, мы освободим старый слот.
+    </p>
+    <a class="cv2-btn-primary" href="https://t.me/{{ support_username.lstrip('@') }}">
+      Написать в поддержку
+    </a>
+  </div>
+
   {% else %}
   <!-- HERO -->
   <div class="cv2-hero">
     <h1 class="cv2-title">Подключите <span class="cv2-title-accent">устройство</span></h1>
     <p class="cv2-subtitle">Два шага — и вы в свободном интернете</p>
+    {% if device_slot %}
+    <p class="cv2-subtitle" style="margin-top:8px;font-size:13px;opacity:.72">
+      Слот устройства активирован · лимит подписки {{ subscription.device_limit }} устр.
+    </p>
+    {% endif %}
   </div>
 
   <!-- STEPS -->
