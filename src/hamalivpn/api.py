@@ -1482,10 +1482,8 @@ async def check_sub_limit(short_uuid: str, ip: str, db: AsyncSession = Depends(g
 async def subscription_meta(token: str, db: AsyncSession = Depends(get_session)):
     """Small read-only helper for the local subscription injector.
 
-    The injector must know the tariff device limit before it adds optional
-    Hysteria profiles. Hysteria does not expose a stable device HWID like
-    Remnawave/VLESS, so strict one-device plans must not receive Hysteria
-    profiles at all.
+    The injector can use this to make profile decisions without querying
+    Remnawave directly. Keep it read-only and local-facing.
     """
     token = (token or "").strip()
     if not token:
@@ -1862,9 +1860,9 @@ def _hysteria_client_ip(req: HysteriaAuthRequest, request: Request) -> str:
 @app.post("/hysteria/auth")
 async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSession = Depends(get_session)):
     # Standalone Hysteria2 has no stable per-device HWID like Remnawave/VLESS.
-    # For strict one-device subscriptions we do not allow Hysteria at all:
-    # otherwise two devices behind the same home/mobile NAT may look like one.
-    # Multi-device plans still get a best-effort rolling-IP guard below.
+    # Keep it available for every active subscription, while applying a
+    # best-effort rolling-IP guard below. True per-device Hysteria limiting
+    # requires per-device auth tokens/device slots, not removing the protocol.
     #
     # Legacy UK/London nodes still use the shared Hysteria password injected only
     # into active subscription documents. Accept it only from our known node IPs
@@ -1887,13 +1885,6 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
     ).scalars().first()
 
     if not sub or sub.status != SubscriptionStatus.active or as_utc(sub.expires_at) <= utcnow():
-        return {"ok": False, "id": ""}
-
-    if int(sub.device_limit or 1) <= 1:
-        logger.info(
-            "Hysteria disabled for strict one-device subscription",
-            extra={"subscription_id": sub.id},
-        )
         return {"ok": False, "id": ""}
 
     client_ip = _hysteria_client_ip(req, request)
