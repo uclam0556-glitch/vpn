@@ -48,6 +48,10 @@
     <p class="cv2-subtitle" style="margin-top:8px;font-size:13px;opacity:.72">
       Слот устройства активирован · лимит подписки {{ subscription.device_limit }} устр.
     </p>
+    {% elif activation_pending %}
+    <p class="cv2-subtitle" style="margin-top:8px;font-size:13px;opacity:.72">
+      Слот ещё свободен · он закрепится только после импорта в приложение
+    </p>
     {% endif %}
   </div>
 
@@ -199,6 +203,7 @@
           Подключить вручную (скопировать ссылку)
         </summary>
         <div class="cv2-manual-body">
+          {% if subscription_url %}
           {% if qr %}
           <div class="cv2-qr-wrap">
             <img class="cv2-qr" src="{{ qr }}" alt="QR-код подписки">
@@ -212,6 +217,15 @@
               Копировать
             </button>
           </div>
+          {% else %}
+          <p class="cv2-step-desc" style="margin:0 0 14px">
+            Ручная ссылка будет создана только после подтверждения. Это защищает лимит устройств:
+            предпросмотр Telegram, WhatsApp или браузер больше не занимает слот.
+          </p>
+          <a class="cv2-copy-btn" href="{{ manual_link }}" style="display:inline-flex;text-decoration:none">
+            Создать ручную ссылку
+          </a>
+          {% endif %}
         </div>
       </details>
     </div>

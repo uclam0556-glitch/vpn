@@ -1591,6 +1591,138 @@ if os.path.isdir(PORTAL_ASSETS_DIR):
     app.mount("/portal/assets", StaticFiles(directory=PORTAL_ASSETS_DIR), name="portal_assets")
 
 
+def _connect_import_path(access_token: str, client: str) -> str:
+    return f"/connect/{access_token}/import/{client}"
+
+
+def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
+    if not subscription_url:
+        return {
+            "hiddify_link": _connect_import_path(access_token, "hiddify"),
+            "v2raytun_link": _connect_import_path(access_token, "v2raytun"),
+            "happ_link": _connect_import_path(access_token, "happ"),
+            "incy_link": _connect_import_path(access_token, "incy"),
+            "streisand_link": _connect_import_path(access_token, "streisand"),
+            "manual_link": _connect_import_path(access_token, "manual"),
+        }
+    return {
+        "hiddify_link": hiddify_deeplink(subscription_url, settings.subscription_name),
+        "v2raytun_link": v2raytun_deeplink(subscription_url),
+        "happ_link": happ_deeplink(subscription_url),
+        "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
+        "streisand_link": streisand_deeplink(subscription_url),
+        "manual_link": "",
+    }
+
+
+def _connect_template_response(
+    request: Request,
+    access_token: str,
+    subscription: Subscription,
+    *,
+    subscription_url: str = "",
+    slot: SubscriptionDevice | None = None,
+    expired: bool = False,
+    limit_reached: bool = False,
+    device_slots_used: int = 0,
+) -> HTMLResponse:
+    links = _connect_links(access_token, subscription_url)
+    return CONNECT_TEMPLATES.TemplateResponse(
+        request,
+        "connect.html",
+        {
+            "subscription": subscription,
+            "subscription_url": subscription_url,
+            "qr": qr_data_uri(subscription_url) if subscription_url else None,
+            **links,
+            "expired": expired,
+            "limit_reached": limit_reached,
+            "activation_pending": bool(not expired and not limit_reached and not subscription_url),
+            "device_slot": slot,
+            "device_slots_used": device_slots_used,
+            "support_username": settings.support_username,
+            "health_status": subscription.health_status,
+            "health_message": subscription.health_message,
+            "endpoint_count": subscription.health_endpoint_count,
+        },
+    )
+
+
+def _set_slot_cookie(response: HTMLResponse | RedirectResponse, subscription: Subscription, slot: SubscriptionDevice) -> None:
+    max_age = max(60, int((as_utc(subscription.expires_at) - utcnow()).total_seconds()))
+    response.set_cookie(
+        f"hamali_slot_{subscription.id}",
+        slot.device_token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.secure_cookies,
+        samesite="lax",
+    )
+
+
+@app.get("/connect/{access_token}/import/{client_name}", response_class=HTMLResponse)
+async def public_connect_import(
+    request: Request,
+    access_token: str,
+    client_name: str,
+    db: AsyncSession = Depends(get_session),
+):
+    subscription = await get_subscription_by_token(db, access_token)
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+
+    expired = as_utc(subscription.expires_at) <= utcnow()
+    if expired:
+        return _connect_template_response(request, access_token, subscription, expired=True)
+
+    gateway = make_remnawave_gateway(settings)
+    try:
+        slot = await ensure_device_slot(
+            db,
+            gateway,
+            settings,
+            subscription,
+            existing_token=request.cookies.get(f"hamali_slot_{subscription.id}"),
+            client_ip=_client_ip(request),
+            user_agent=request.headers.get("User-Agent", ""),
+        )
+        subscription_url = device_subscription_url(settings, subscription, slot)
+        await db.commit()
+    except DeviceLimitReached:
+        device_slots_used = await active_device_slot_count(db, subscription.id)
+        return _connect_template_response(
+            request,
+            access_token,
+            subscription,
+            expired=False,
+            limit_reached=True,
+            device_slots_used=device_slots_used,
+        )
+
+    links = _connect_links(access_token, subscription_url)
+    client = client_name.lower().strip()
+    deeplink = {
+        "hiddify": links["hiddify_link"],
+        "v2raytun": links["v2raytun_link"],
+        "happ": links["happ_link"],
+        "incy": links["incy_link"],
+        "streisand": links["streisand_link"],
+    }.get(client, "")
+
+    if client == "manual" or not deeplink:
+        response = _connect_template_response(
+            request,
+            access_token,
+            subscription,
+            subscription_url=subscription_url,
+            slot=slot,
+        )
+    else:
+        response = RedirectResponse(url=deeplink, status_code=302)
+    _set_slot_cookie(response, subscription, slot)
+    return response
+
+
 @app.get("/connect/{access_token}", response_class=HTMLResponse)
 async def public_connect_page(
     request: Request,
@@ -1618,55 +1750,45 @@ async def public_connect_page(
 
     if not expired:
         cookie_name = f"hamali_slot_{subscription.id}"
-        gateway = make_remnawave_gateway(settings)
-        try:
-            slot = await ensure_device_slot(
-                db,
-                gateway,
-                settings,
-                subscription,
-                existing_token=request.cookies.get(cookie_name),
-                client_ip=_client_ip(request),
-                user_agent=request.headers.get("User-Agent", ""),
+        existing_token = request.cookies.get(cookie_name)
+        if existing_token:
+            existing_slot = await db.scalar(
+                select(SubscriptionDevice).where(
+                    SubscriptionDevice.device_token == existing_token,
+                    SubscriptionDevice.subscription_id == subscription.id,
+                    SubscriptionDevice.is_active.is_(True),
+                )
             )
-            subscription_url = device_subscription_url(settings, subscription, slot)
-            await db.commit()
-        except DeviceLimitReached:
-            limit_reached = True
-            device_slots_used = await active_device_slot_count(db, subscription.id)
+            if existing_slot:
+                gateway = make_remnawave_gateway(settings)
+                try:
+                    slot = await ensure_device_slot(
+                        db,
+                        gateway,
+                        settings,
+                        subscription,
+                        existing_token=existing_token,
+                        client_ip=_client_ip(request),
+                        user_agent=request.headers.get("User-Agent", ""),
+                    )
+                    subscription_url = device_subscription_url(settings, subscription, slot)
+                    await db.commit()
+                except DeviceLimitReached:
+                    limit_reached = True
+                    device_slots_used = await active_device_slot_count(db, subscription.id)
 
-    response = CONNECT_TEMPLATES.TemplateResponse(
+    response = _connect_template_response(
         request,
-        "connect.html",
-        {
-            "subscription": subscription,
-            "subscription_url": subscription_url,
-            "qr": qr_data_uri(subscription_url) if subscription_url else None,
-            "hiddify_link": hiddify_deeplink(subscription_url, settings.subscription_name),
-            "v2raytun_link": v2raytun_deeplink(subscription_url),
-            "happ_link": happ_deeplink(subscription_url),
-            "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
-            "streisand_link": streisand_deeplink(subscription_url),
-            "expired": expired,
-            "limit_reached": limit_reached,
-            "device_slot": slot,
-            "device_slots_used": device_slots_used,
-            "support_username": settings.support_username,
-            "health_status": subscription.health_status,
-            "health_message": subscription.health_message,
-            "endpoint_count": subscription.health_endpoint_count,
-        },
+        access_token,
+        subscription,
+        subscription_url=subscription_url,
+        slot=slot,
+        expired=expired,
+        limit_reached=limit_reached,
+        device_slots_used=device_slots_used,
     )
     if slot:
-        max_age = max(60, int((expires_at - utcnow()).total_seconds()))
-        response.set_cookie(
-            f"hamali_slot_{subscription.id}",
-            slot.device_token,
-            max_age=max_age,
-            httponly=True,
-            secure=settings.secure_cookies,
-            samesite="lax",
-        )
+        _set_slot_cookie(response, subscription, slot)
     return response
 
 @app.get("/portal")

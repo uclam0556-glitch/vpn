@@ -1,5 +1,5 @@
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import asc, desc, func, select
@@ -12,6 +12,18 @@ from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 
 class DeviceLimitReached(RuntimeError):
     pass
+
+
+_UNCONFIRMED_SLOT_GRACE = timedelta(minutes=3)
+_UNCONFIRMED_SLOT_TOUCH_WINDOW = timedelta(minutes=2)
+_PREVIEW_UA_MARKERS = (
+    "whatsapp",
+    "telegrambot",
+    "facebookexternalhit",
+    "twitterbot",
+    "vkshare",
+    "bot",
+)
 
 
 def _now() -> datetime:
@@ -123,6 +135,76 @@ async def _create_remote_device_user(
     slot.subscription_url = remote.subscription_url
 
 
+async def _slot_has_hwid_devices(gateway: RemnawaveGateway, slot: SubscriptionDevice) -> bool:
+    if not slot.remnawave_uuid:
+        return False
+    try:
+        return bool(await gateway.list_hwid_devices(slot.remnawave_uuid))
+    except Exception:
+        # If Remnawave cannot answer, do not risk replacing a real device.
+        return True
+
+
+def _looks_like_unconfirmed_activation(slot: SubscriptionDevice, now: datetime) -> bool:
+    activated_at = as_utc(slot.activated_at or slot.created_at or now)
+    last_seen_at = as_utc(slot.last_seen_at or slot.activated_at or slot.created_at or now)
+    age = now - activated_at
+    touched_for = last_seen_at - activated_at
+    ua = (slot.user_agent or "").lower()
+
+    if age < _UNCONFIRMED_SLOT_GRACE:
+        return False
+    if any(marker in ua for marker in _PREVIEW_UA_MARKERS):
+        return True
+    return touched_for <= _UNCONFIRMED_SLOT_TOUCH_WINDOW
+
+
+async def _replace_unconfirmed_slot_if_possible(
+    session: AsyncSession,
+    gateway: RemnawaveGateway,
+    subscription: Subscription,
+    *,
+    now: datetime,
+    actor: str,
+) -> bool:
+    """Free a stale slot created by a preview/browser before real VPN import.
+
+    The public connect page used to create slots on page view. That meant
+    Telegram/WhatsApp previews or a user opening the page without importing
+    could burn the only slot on a 1-device tariff. A slot is safe to replace
+    only when Remnawave has no HWID device for it and our own last_seen timestamp
+    never moved beyond the initial activation window.
+    """
+
+    for slot in await active_device_slots(session, subscription.id):
+        if not _looks_like_unconfirmed_activation(slot, now):
+            continue
+        if await _slot_has_hwid_devices(gateway, slot):
+            continue
+        if slot.remnawave_uuid:
+            try:
+                await gateway.disable_user(slot.remnawave_uuid)
+            except Exception:
+                pass
+        slot.is_active = False
+        session.add(
+            AuditLog(
+                actor=actor,
+                action="subscription.device_slot.replaced_unconfirmed",
+                entity_type="subscription",
+                entity_id=subscription.id,
+                details={
+                    "slot_id": slot.id,
+                    "remnawave_uuid": slot.remnawave_uuid,
+                    "user_agent": slot.user_agent,
+                    "first_ip": slot.first_ip,
+                },
+            )
+        )
+        return True
+    return False
+
+
 async def ensure_device_slot(
     session: AsyncSession,
     gateway: RemnawaveGateway,
@@ -182,7 +264,15 @@ async def ensure_device_slot(
     limit = max(1, int(subscription.device_limit or 1))
     used = await active_device_slot_count(session, subscription.id)
     if used >= limit:
-        raise DeviceLimitReached("device_limit_reached")
+        replaced = await _replace_unconfirmed_slot_if_possible(
+            session,
+            gateway,
+            subscription,
+            now=now,
+            actor=f"system:device-slot:{client_ip or 'unknown'}",
+        )
+        if not replaced:
+            raise DeviceLimitReached("device_limit_reached")
 
     slot = SubscriptionDevice(
         subscription_id=subscription.id,
