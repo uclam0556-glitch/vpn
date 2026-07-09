@@ -305,10 +305,13 @@ function showSubModal(url) {
   modal(`
     <h3>Ключ готов 🎉</h3>
     <p class="sub">Отправьте клиенту эту ссылку — откроется красивая страница с установкой приложения и подключением в один клик.</p>
+    <p class="hint" style="margin-top:8px">
+      Важно: не импортируйте клиентский ключ на своём устройстве. На тарифе «1 устройство»
+      первый импорт закрепляет слот за тем телефоном или компьютером, где его открыли.
+    </p>
     <div class="field"><label>Ссылка для клиента</label><div class="codebox">${esc(url || "—")}</div></div>
     <div class="modal__actions">
       <button class="btn btn--primary" data-copy="${esc(url || "")}">Скопировать ссылку</button>
-      ${url ? `<button class="btn" data-openurl="${esc(url)}">Открыть</button>` : ""}
     </div>
     <div class="modal__actions" style="margin-top:10px">
       <button class="btn btn--ghost" data-action="close">Готово</button>
@@ -366,10 +369,13 @@ function showClientModal(c) {
   const back = modal(`
     <h3>${esc(c.name || "Клиент")}</h3>
     <p class="sub">${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)} · ${c.device_limit || 0} устр.</p>
+    <p class="hint" style="margin-top:8px">
+      Для проверки не импортируйте ссылку в свой VPN-клиент. Если слот уже занят ошибочно —
+      откройте «Устройства» и отключите лишнее устройство.
+    </p>
     <div class="field"><label>Ссылка для клиента</label><div class="codebox">${esc(url || "—")}</div></div>
     <div class="modal__actions">
       <button class="btn btn--primary" data-copy="${esc(url)}">Скопировать</button>
-      ${url ? `<button class="btn" data-openurl="${esc(url)}">Открыть</button>` : ""}
     </div>
     <div class="modal__actions" style="margin-top:10px">
       <button class="btn" id="renewClient">Продлить</button>

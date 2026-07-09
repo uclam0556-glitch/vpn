@@ -31,6 +31,10 @@
       Для этой подписки доступно устройств: <b>{{ subscription.device_limit }}</b>.
       Все слоты уже заняты, поэтому новая ссылка не выдана.
     </p>
+    <div class="cv2-warning">
+      Если Happ показывает <b>«ошибка 39»</b>, почти всегда это означает, что ключ уже
+      активирован на другом телефоне или компьютере.
+    </div>
     <p>
       Если вы меняете телефон или компьютер — напишите в поддержку, мы освободим старый слот.
     </p>
@@ -52,6 +56,10 @@
     <p class="cv2-subtitle" style="margin-top:8px;font-size:13px;opacity:.72">
       Слот ещё свободен · он закрепится только после импорта в приложение
     </p>
+    <div class="cv2-warning">
+      Важно: нажимайте импорт только на том устройстве, где будете пользоваться VPN.
+      На тарифе «1 устройство» первый импорт закрепляет ключ за этим телефоном или компьютером.
+    </div>
     {% endif %}
   </div>
 
@@ -148,7 +156,7 @@
       </div>
 
       <div class="cv2-connect-buttons">
-        <a class="cv2-connect-btn" href="{{ hiddify_link }}">
+        <a class="cv2-connect-btn cv2-import-action" href="{{ hiddify_link }}">
           <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #0ea5e9, #0284c7);">H</div>
           <div class="cv2-connect-info">
             <b>Импорт в Hiddify</b>
@@ -157,7 +165,7 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </a>
 
-        <a class="cv2-connect-btn" href="{{ v2raytun_link }}">
+        <a class="cv2-connect-btn cv2-import-action" href="{{ v2raytun_link }}">
           <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">V</div>
           <div class="cv2-connect-info">
             <b>Импорт в v2RayTun</b>
@@ -166,7 +174,7 @@
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
         </a>
 
-        <a class="cv2-connect-btn" href="{{ happ_link }}">
+        <a class="cv2-connect-btn cv2-import-action" href="{{ happ_link }}">
           <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">H</div>
           <div class="cv2-connect-info">
             <b>Импорт в Happ</b>
@@ -176,7 +184,7 @@
         </a>
 
         {% if incy_link %}
-        <a class="cv2-connect-btn" href="{{ incy_link }}">
+        <a class="cv2-connect-btn cv2-import-action" href="{{ incy_link }}">
           <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #14b8a6, #2563eb);">I</div>
           <div class="cv2-connect-info">
             <b>Импорт в INCY</b>
@@ -186,7 +194,7 @@
         </a>
         {% endif %}
 
-        <a class="cv2-connect-btn" href="{{ streisand_link }}">
+        <a class="cv2-connect-btn cv2-import-action" href="{{ streisand_link }}">
           <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #ff6b35, #f7931e);">S</div>
           <div class="cv2-connect-info">
             <b>Импорт в Streisand</b>
@@ -242,4 +250,15 @@
   </footer>
 
 </main>
+{% if activation_pending and subscription.device_limit <= 1 %}
+<script>
+  document.querySelectorAll(".cv2-import-action").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      if (!window.confirm("Этот тариф рассчитан на 1 устройство. Первый импорт закрепит ключ за текущим телефоном или компьютером. Продолжить подключение именно на этом устройстве?")) {
+        event.preventDefault();
+      }
+    });
+  });
+</script>
+{% endif %}
 {% endblock %}

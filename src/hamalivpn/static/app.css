@@ -220,6 +220,7 @@ td { border-top: 1px solid var(--line); color: #c8cfda; font-size: .75rem; paddi
 .cv2-title { font-family: var(--display); font-size: clamp(2rem,5vw,2.8rem); font-weight: 800; letter-spacing: -.04em; margin: 0 0 10px; line-height: 1.1; }
 .cv2-title-accent { background: linear-gradient(135deg, #62e4ff, #5478ff, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
 .cv2-subtitle { color: var(--muted); font-size: .95rem; margin: 0; }
+.cv2-warning { background: rgba(245, 158, 11, .1); border: 1px solid rgba(245, 158, 11, .22); border-radius: 14px; color: #ffd48a; font-size: .78rem; line-height: 1.55; margin: 16px auto 0; max-width: 460px; padding: 12px 14px; text-align: left; }
 
 .cv2-steps { width: 100%; max-width: 540px; display: flex; flex-direction: column; }
 
