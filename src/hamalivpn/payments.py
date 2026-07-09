@@ -128,8 +128,12 @@ async def create_platega_link(
             f"Platega returned {response.status_code}: {response.text[:500]}"
         )
     data = response.json()
-    if not data.get("transactionId") or not data.get("url"):
+    transaction_id = data.get("transactionId") or data.get("id")
+    payment_url = data.get("url") or data.get("redirect")
+    if not transaction_id or not payment_url:
         raise PlategaPaymentError("Platega response does not contain payment URL")
+    data["transactionId"] = transaction_id
+    data["url"] = payment_url
     return data
 
 

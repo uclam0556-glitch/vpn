@@ -45,6 +45,23 @@ if not _docs_enabled:
     async def disabled_api_docs() -> PlainTextResponse:
         return PlainTextResponse("Not found", status_code=404)
 
+
+@app.get("/health")
+@app.get("/api/health")
+async def health() -> dict[str, str]:
+    """Cheap liveness check for Caddy/Cloudflare/monitoring.
+
+    Keep this route in the portal API too. The Docker control app already has
+    /api/health, but portal.hamali.ru/app.hamali.ru are served by this host
+    process on :8001. Without an explicit route here, monitors get redirected
+    to /portal and cannot distinguish "API is alive" from "SPA fallback works".
+    """
+    return {
+        "status": "ok",
+        "app": "hamalivpn-portal",
+        "environment": settings.environment,
+    }
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 def validate_telegram_data(init_data: str) -> dict:
@@ -1223,13 +1240,15 @@ async def _fk_notify(
     plan_code: str,
     days: int,
     subscription: Subscription | None,
+    *,
+    provisioned_ok: bool = True,
 ) -> None:
-    if subscription is None:
+    if subscription is None or not provisioned_ok:
         await _tg_send(
             telegram_id,
             "✅ <b>Оплата получена.</b>\n\n"
-            "Автоматическая выдача не завершилась. Напишите в поддержку — "
-            "мы быстро активируем доступ вручную.",
+            "Автоматическая выдача сейчас не завершилась. Мы уже видим оплату — "
+            "напишите в поддержку, и доступ быстро активируют вручную.",
         )
         return
 
@@ -1257,25 +1276,23 @@ async def _fk_fulfill(order_id: str) -> None:
         tx = await db.get(PaymentTransaction, order_id)
         if not tx:
             return
+        if tx.status != PaymentStatus.paid:
+            logger.warning("Skip fulfillment for non-paid transaction %s", order_id)
+            return
         customer = await db.get(Customer, tx.customer_id)
         if not customer:
             return
         days = FK_PLAN_DAYS.get(tx.payload or "", 30)
         devices = FK_PLAN_DEVICES.get(tx.payload or "", 1)
+        provisioned_ok = False
+        provision_error: str | None = None
+        ref_customer: Customer | None = None
         ref_tg, ref_bonus = None, 0
         if customer.referrer_id:
             ref = await db.get(Customer, customer.referrer_id)
             if ref:
+                ref_customer = ref
                 ref_bonus = int(tx.amount * FK_REFERRAL_RATE)
-                ref.balance_rub += ref_bonus
-                db.add(
-                    BalanceTransaction(
-                        customer_id=ref.id,
-                        amount=ref_bonus,
-                        type="referral_bonus",
-                        description=f"Бонус за оплату реферала: {FK_PLAN_NAMES.get(tx.payload or '', tx.payload or 'тариф')}",
-                    )
-                )
                 ref_tg = ref.telegram_id
         sub = await get_latest_subscription(db, customer.telegram_id)
         provisioned = False
@@ -1289,8 +1306,9 @@ async def _fk_fulfill(order_id: str) -> None:
                 )
                 sub = await db.get(Subscription, r.subscription_id)
                 provisioned = True
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.exception("Could not provision paid subscription")
+                provision_error = f"create_subscription_failed:{type(exc).__name__}"
         if sub:
             now = datetime.now(UTC)
             base = now if provisioned else max(
@@ -1324,10 +1342,52 @@ async def _fk_fulfill(order_id: str) -> None:
                         actor="system:payment:freekassa",
                     )
                     await db.commit()
-                except Exception:
-                    pass
-        await _fk_notify(customer.telegram_id, tx.payload or "", days, sub)
-        if ref_tg and ref_bonus:
+                    provisioned_ok = True
+                except Exception as exc:
+                    logger.exception("Could not update paid Remnawave access")
+                    provision_error = f"update_remote_failed:{type(exc).__name__}"
+            else:
+                provision_error = "missing_remnawave_uuid"
+
+        if provision_error:
+            db.add(
+                AuditLog(
+                    actor="system:payment",
+                    action="payment.fulfillment.failed",
+                    entity_type="payment_transaction",
+                    entity_id=tx.id,
+                    details={
+                        "provider": tx.provider,
+                        "payload": tx.payload,
+                        "customer_id": customer.id,
+                        "telegram_id": customer.telegram_id,
+                        "subscription_id": sub.id if sub else None,
+                        "reason": provision_error,
+                    },
+                )
+            )
+            await db.commit()
+
+        if provisioned_ok and ref_customer and ref_bonus:
+            ref_customer.balance_rub += ref_bonus
+            db.add(
+                BalanceTransaction(
+                    customer_id=ref_customer.id,
+                    amount=ref_bonus,
+                    type="referral_bonus",
+                    description=f"Бонус за оплату реферала: {FK_PLAN_NAMES.get(tx.payload or '', tx.payload or 'тариф')}",
+                )
+            )
+            await db.commit()
+
+        await _fk_notify(
+            customer.telegram_id,
+            tx.payload or "",
+            days,
+            sub,
+            provisioned_ok=provisioned_ok,
+        )
+        if provisioned_ok and ref_tg and ref_bonus:
             await _tg_send(
                 ref_tg,
                 f"🎁 Ваш реферал оплатил подписку!\nНачислено <b>{ref_bonus} ₽</b> "
@@ -1498,7 +1558,6 @@ async def check_sub_limit(short_uuid: str, ip: str, db: AsyncSession = Depends(g
 
     redis_key = f"sub:devices:{sub.id}"
     now_ts = int(time.time())
-    window_start = now_ts - 600
 
     unique_ips, _backend = await _rolling_unique_ips(redis_key, ip, now_ts)
 
