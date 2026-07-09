@@ -366,9 +366,14 @@ function clientRow(c) {
 }
 function showClientModal(c) {
   const url = c.connect_url || c.sub_url || "";
+  const isAdmin = state.me && state.me.role === "super_admin";
   const back = modal(`
     <h3>${esc(c.name || "Клиент")}</h3>
-    <p class="sub">${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)} · ${c.device_limit || 0} устр.</p>
+    <p class="sub">
+      ${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)} · ${c.device_limit || 0} устр.
+      ${c.plan_code ? ` · ${esc(c.plan_code)}` : ""}
+      ${isAdmin && c.reseller_id ? ` · реселлер #${esc(c.reseller_id)}` : ""}
+    </p>
     <p class="hint" style="margin-top:8px">
       Для проверки не импортируйте ссылку в свой VPN-клиент. Если слот уже занят ошибочно —
       откройте «Устройства» и отключите лишнее устройство.
@@ -401,17 +406,18 @@ function showClientModal(c) {
 async function openRenewModal(c) {
   const uuid = c.remnawave_uuid;
   if (!uuid) return toast("Нет ключа для продления", "err");
+  const isAdmin = state.me && state.me.role === "super_admin";
   const tariffs = await api("/reseller/tariffs");
   const opts = tariffs.map((t) =>
     `<option value="${t.id}">${esc(t.name)} · ${rub(t.price_rub)} · ${t.duration_days} дн. · ${t.device_limit} устр.</option>`
   ).join("");
   modal(`
     <h3>Продлить клиента</h3>
-    <p class="sub">${esc(c.name || "Клиент")} · текущая дата: ${fmtDate(c.expires_at)}. Списание будет с баланса реселлера.</p>
+    <p class="sub">${esc(c.name || "Клиент")} · текущая дата: ${fmtDate(c.expires_at)}. ${isAdmin ? "Админское продление выполняется без списания баланса." : "Списание будет с баланса реселлера."}</p>
     <div class="field"><label>Тариф продления</label><select class="select" id="renewTariff">${opts}</select></div>
     <div class="modal__actions">
       <button class="btn btn--ghost" data-action="close">Отмена</button>
-      <button class="btn btn--primary" id="renewConfirm">Продлить и списать</button>
+      <button class="btn btn--primary" id="renewConfirm">${isAdmin ? "Продлить" : "Продлить и списать"}</button>
     </div>`);
   document.getElementById("renewConfirm").addEventListener("click", async (e) => {
     const btn = e.currentTarget;
@@ -739,25 +745,48 @@ function openTariffModal(t) {
 async function viewAllKeys(view) {
   const q = state.cache.keysQ || "";
   const keys = await api(`/admin/keys?q=${encodeURIComponent(q)}`);
+  const active = keys.filter((k) => k.sub_status === "active" || k.status === "active").length;
+  const expiring = keys.filter((k) => {
+    const d = daysLeft(k.expires_at);
+    return (k.sub_status === "active" || k.status === "active") && d !== null && d >= 0 && d <= 5;
+  }).length;
+  const disabled = keys.length - active;
   view.innerHTML = `
+    <div class="grid grid--stats">
+      <div class="card stat"><div class="stat__label">Всего ключей</div><div class="stat__value">${keys.length}</div></div>
+      <div class="card stat"><div class="stat__label">Активные</div><div class="stat__value accent">${active}</div></div>
+      <div class="card stat"><div class="stat__label">Истекают до 5 дней</div><div class="stat__value">${expiring}</div></div>
+      <div class="card stat"><div class="stat__label">Отключены / истекли</div><div class="stat__value">${disabled}</div></div>
+    </div>
     <div class="section-title"><h2>Все ключи <span class="muted">${keys.length}</span></h2>
       <button class="btn btn--primary btn--sm" data-action="add-key">+ Создать ключ</button></div>
     <div class="field"><input class="input" id="keySearch" placeholder="Поиск по имени или Telegram ID" value="${esc(q)}" /></div>
     <div class="rows">
-      ${keys.length ? keys.map((k) => {
-        const [label, cls] = SUB_STATUS[k.status] || [k.status, "pending"];
-        return `<div class="row">
-          <div class="row__main">
-            <div class="row__title">${esc(k.client || "—")} <span class="tag tag--${cls}">${label}</span></div>
-            <div class="row__meta">tg ${(k.telegram_id != null ? k.telegram_id : "—")} · до ${fmtDate(k.expires_at)}${k.reseller_id ? " · реселлер #" + k.reseller_id : ""}</div>
-          </div>
-          <div class="row__actions">
-            ${k.uuid && k.status === "active" ? `<button class="btn btn--sm btn--danger" data-key-disable="${esc(k.uuid)}">Отключить</button>` : ""}
-          </div></div>`;
-      }).join("") : `<div class="empty">Ключей нет</div>`}
+      ${keys.length ? keys.map(adminKeyRow).join("") : `<div class="empty">Ключей нет</div>`}
     </div>`;
   const search = document.getElementById("keySearch");
   search.addEventListener("change", () => { state.cache.keysQ = search.value.trim(); renderTab(); });
+}
+
+function adminKeyRow(k) {
+  const [label, cls] = SUB_STATUS[k.status] || SUB_STATUS[k.sub_status] || [k.status || "none", "pending"];
+  const dl = daysLeft(k.expires_at);
+  const left = dl == null ? "" : dl < 0 ? "истёк" : `${dl} дн.`;
+  const name = k.client || k.name || "Без имени";
+  return `<div class="row">
+    <div class="row__main">
+      <div class="row__title">${esc(name)} <span class="tag tag--${cls}">${label}</span></div>
+      <div class="row__meta">
+        tg ${(k.telegram_id != null ? esc(k.telegram_id) : "—")} · до ${fmtDate(k.expires_at)}${left ? " · " + left : ""}
+        · 📱 ${k.device_limit || 0}${k.plan_code ? " · " + esc(k.plan_code) : ""}${k.reseller_id ? " · реселлер #" + esc(k.reseller_id) : ""}
+      </div>
+    </div>
+    <div class="row__actions">
+      ${k.connect_url ? `<button class="btn btn--sm" data-copy="${esc(k.connect_url)}">Ссылка</button>` : ""}
+      <button class="btn btn--sm" data-client='${esc(JSON.stringify(k))}'>Открыть</button>
+      ${k.uuid && k.status === "active" ? `<button class="btn btn--sm btn--danger" data-key-disable="${esc(k.uuid)}">Отключить</button>` : ""}
+    </div>
+  </div>`;
 }
 async function adminDisableKey(uuid) {
   if (!confirm("Отключить ключ? Клиент потеряет доступ.")) return;

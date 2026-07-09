@@ -881,19 +881,32 @@ async def admin_all_keys(q: str = "", user: dict = Depends(get_portal_user), db:
         select(Subscription).options(selectinload(Subscription.customer))
         .order_by(desc(Subscription.created_at)).limit(300)
     )).scalars().all()
+    base = get_settings().public_base_url.rstrip("/")
     res = []
     for s in rows:
         cust = s.customer
         name = (cust.full_name if cust else "") or ""
-        if q and q.lower() not in name.lower() and q not in str(cust.telegram_id if cust else ""):
+        telegram_id = cust.telegram_id if cust else None
+        reseller_id = cust.referrer_id if cust else None
+        if q and q.lower() not in name.lower() and q not in str(telegram_id or ""):
             continue
         res.append({
             "uuid": s.remnawave_uuid,
+            "id": cust.id if cust else None,
             "client": name,
-            "telegram_id": cust.telegram_id if cust else None,
+            "name": name,
+            "telegram_id": telegram_id,
             "status": str(s.status).split(".")[-1],
+            "sub_status": str(s.status).split(".")[-1],
             "expires_at": s.expires_at.isoformat() if s.expires_at else None,
-            "reseller_id": cust.referrer_id if cust else None,
+            "sub_url": s.subscription_url,
+            "connect_url": f"{base}/connect/{s.access_token}" if s.access_token else None,
+            "remnawave_uuid": s.remnawave_uuid,
+            "remnawave_short_uuid": s.remnawave_short_uuid,
+            "device_limit": s.device_limit,
+            "traffic_limit_gb": s.traffic_limit_gb,
+            "plan_code": s.plan_code,
+            "reseller_id": reseller_id,
         })
     return res
 
