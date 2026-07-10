@@ -154,7 +154,13 @@ function renderLogin(error = "") {
       renderShell();
     } catch (err) {
       clearKey();
-      if (err.message !== "unauthorized") renderLogin("Неверный ключ");
+      if (err.message !== "unauthorized") {
+        renderLogin(
+          err.message && err.message.startsWith("Ошибка 5")
+            ? "Портал временно недоступен. Обновите страницу через минуту или напишите в поддержку."
+            : "Не удалось проверить ключ. Проверьте подключение и попробуйте ещё раз."
+        );
+      }
     }
   });
 }

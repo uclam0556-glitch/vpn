@@ -1671,6 +1671,10 @@ async def subscription_meta(token: str, db: AsyncSession = Depends(get_session))
 
 PACKAGE_DIR = os.path.dirname(__file__)
 CONNECT_TEMPLATES = Jinja2Templates(directory=os.path.join(PACKAGE_DIR, "templates"))
+STATIC_DIR = os.path.join(PACKAGE_DIR, "static")
+if os.path.isdir(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 PORTAL_DIST_DIR = os.getenv("PORTAL_DIST_DIR", "/opt/hamalivpn/portal-webapp/dist")
 if not os.path.isdir(PORTAL_DIST_DIR):
     PORTAL_DIST_DIR = os.path.join(PACKAGE_DIR, "portal_web")
