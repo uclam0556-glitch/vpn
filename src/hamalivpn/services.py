@@ -24,6 +24,23 @@ class SubscriptionNotFoundError(RuntimeError):
     pass
 
 
+SHORT_LINK_CODE_LENGTH = 16
+_MIN_SHORT_LINK_CODE_LENGTH = 8
+
+
+def subscription_short_code(subscription_or_token: Subscription | str) -> str:
+    access_token = (
+        subscription_or_token.access_token
+        if isinstance(subscription_or_token, Subscription)
+        else str(subscription_or_token)
+    )
+    return access_token[:SHORT_LINK_CODE_LENGTH]
+
+
+def subscription_connect_url(settings: Settings, subscription_or_token: Subscription | str) -> str:
+    return f"{settings.public_base_url.rstrip('/')}/{subscription_short_code(subscription_or_token)}"
+
+
 def _remote_username(telegram_id: int) -> str:
     return f"tg_{telegram_id}_{secrets.token_hex(3)}"
 
@@ -135,7 +152,7 @@ async def issue_trial(
             subscription_id=existing.id,
             access_token=existing.access_token,
             subscription_url=remote.subscription_url,
-            connect_url=(f"{settings.public_base_url.rstrip('/')}/connect/{existing.access_token}"),
+            connect_url=subscription_connect_url(settings, existing),
             expires_at=expires_at,
             device_limit=settings.trial_device_limit,
             traffic_limit_gb=settings.trial_traffic_gb,
@@ -187,7 +204,7 @@ async def issue_trial(
         subscription_id=subscription.id,
         access_token=access_token,
         subscription_url=remote.subscription_url,
-        connect_url=f"{settings.public_base_url.rstrip('/')}/connect/{access_token}",
+        connect_url=subscription_connect_url(settings, subscription),
         expires_at=expires_at,
         device_limit=settings.trial_device_limit,
         traffic_limit_gb=settings.trial_traffic_gb,
@@ -354,7 +371,27 @@ async def get_latest_subscription(session: AsyncSession, telegram_id: int) -> Su
 
 
 async def get_subscription_by_token(session: AsyncSession, token: str) -> Subscription | None:
-    return await session.scalar(select(Subscription).where(Subscription.access_token == token))
+    token = (token or "").strip()
+    if not token:
+        return None
+
+    exact = await session.scalar(select(Subscription).where(Subscription.access_token == token))
+    if exact is not None:
+        return exact
+
+    if len(token) < _MIN_SHORT_LINK_CODE_LENGTH:
+        return None
+
+    matches = (
+        await session.execute(
+            select(Subscription)
+            .where(Subscription.access_token.startswith(token, autoescape=True))
+            .limit(2)
+        )
+    ).scalars().all()
+    if len(matches) != 1:
+        return None
+    return matches[0]
 
 
 async def disable_subscription(

@@ -324,7 +324,7 @@ async function viewClients(view) {
   const q = (state.cache.clientQ || "").toLowerCase();
   const visible = q
     ? clients.filter((c) =>
-        `${c.name || ""} ${c.telegram_id || ""}`.toLowerCase().includes(q)
+        `${c.name || ""} ${c.telegram_id || ""} ${c.short_code || ""} ${c.connect_url || ""}`.toLowerCase().includes(q)
       )
     : clients;
   const active = clients.filter((c) => c.sub_status === "active").length;
@@ -354,9 +354,12 @@ function clientRow(c) {
   const dl = daysLeft(c.expires_at);
   const left = dl == null ? "" : dl < 0 ? "истёк" : `${dl} дн.`;
   return `<div class="row">
-    <div class="row__main">
+      <div class="row__main">
       <div class="row__title">${esc(c.name || "Без имени")} <span class="tag tag--${cls}">${label}</span></div>
-      <div class="row__meta">до ${fmtDate(c.expires_at)} ${left ? "· " + left : ""} · 📱 ${c.device_limit}</div>
+      <div class="row__meta">
+        ${c.short_code ? `код ${esc(c.short_code)} · ` : ""}до ${fmtDate(c.expires_at)}
+        ${left ? " · " + left : ""} · 📱 ${c.device_limit}
+      </div>
     </div>
     <div class="row__actions">
       ${c.connect_url ? `<button class="btn btn--sm" data-copy="${esc(c.connect_url)}">Ссылка</button>` : ""}
@@ -372,12 +375,14 @@ function showClientModal(c) {
     <p class="sub">
       ${(SUB_STATUS[c.sub_status] || [c.sub_status])[0]} · до ${fmtDate(c.expires_at)} · ${c.device_limit || 0} устр.
       ${c.plan_code ? ` · ${esc(c.plan_code)}` : ""}
+      ${c.short_code ? ` · код ${esc(c.short_code)}` : ""}
       ${isAdmin && c.reseller_id ? ` · реселлер #${esc(c.reseller_id)}` : ""}
     </p>
     <p class="hint" style="margin-top:8px">
       Для проверки не импортируйте ссылку в свой VPN-клиент. Если слот уже занят ошибочно —
       откройте «Устройства» и отключите лишнее устройство.
     </p>
+    ${c.short_code ? `<div class="field"><label>Короткий код для поиска</label><div class="codebox">${esc(c.short_code)}</div></div>` : ""}
     <div class="field"><label>Ссылка для клиента</label><div class="codebox">${esc(url || "—")}</div></div>
     <div class="modal__actions">
       <button class="btn btn--primary" data-copy="${esc(url)}">Скопировать</button>
@@ -760,7 +765,7 @@ async function viewAllKeys(view) {
     </div>
     <div class="section-title"><h2>Все ключи <span class="muted">${keys.length}</span></h2>
       <button class="btn btn--primary btn--sm" data-action="add-key">+ Создать ключ</button></div>
-    <div class="field"><input class="input" id="keySearch" placeholder="Поиск по имени или Telegram ID" value="${esc(q)}" /></div>
+    <div class="field"><input class="input" id="keySearch" placeholder="Поиск по имени, Telegram ID, короткому коду или ссылке" value="${esc(q)}" /></div>
     <div class="rows">
       ${keys.length ? keys.map(adminKeyRow).join("") : `<div class="empty">Ключей нет</div>`}
     </div>`;
@@ -777,7 +782,7 @@ function adminKeyRow(k) {
     <div class="row__main">
       <div class="row__title">${esc(name)} <span class="tag tag--${cls}">${label}</span></div>
       <div class="row__meta">
-        tg ${(k.telegram_id != null ? esc(k.telegram_id) : "—")} · до ${fmtDate(k.expires_at)}${left ? " · " + left : ""}
+        ${k.short_code ? `код ${esc(k.short_code)} · ` : ""}tg ${(k.telegram_id != null ? esc(k.telegram_id) : "—")} · до ${fmtDate(k.expires_at)}${left ? " · " + left : ""}
         · 📱 ${k.device_limit || 0}${k.plan_code ? " · " + esc(k.plan_code) : ""}${k.reseller_id ? " · реселлер #" + esc(k.reseller_id) : ""}
       </div>
     </div>

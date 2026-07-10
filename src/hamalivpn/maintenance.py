@@ -11,7 +11,7 @@ from .device_limits import prune_hwid_devices_to_limit
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
 from .premium_emoji import ce
 from .remnawave import RemnawaveError, make_remnawave_gateway
-from .services import check_due_subscription_health, expire_due_subscriptions
+from .services import check_due_subscription_health, expire_due_subscriptions, subscription_connect_url
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ _last_hwid_enforce_at: datetime | None = None
 
 
 def _connect_url(settings, subscription: Subscription) -> str:
-    return f"{settings.public_base_url.rstrip('/')}/connect/{subscription.access_token}"
+    return subscription_connect_url(settings, subscription)
 
 
 def _support_url(settings) -> str:

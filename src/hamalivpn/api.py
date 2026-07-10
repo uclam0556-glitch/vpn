@@ -362,7 +362,11 @@ from .models import (
 )
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
-from .services import get_subscription_by_token
+from .services import (
+    get_subscription_by_token,
+    subscription_connect_url,
+    subscription_short_code,
+)
 
 class BuyKeyRequest(BaseModel):
     tariff_id: int
@@ -462,7 +466,6 @@ async def get_reseller_clients(user: dict = Depends(get_portal_user), db: AsyncS
         
     clients = (await db.execute(select(Customer).options(selectinload(Customer.subscriptions)).filter_by(referrer_id=customer.id).order_by(desc(Customer.created_at)))).scalars().all()
 
-    base = get_settings().public_base_url.rstrip("/")
     res = []
     for c in clients:
         sub = next((s for s in c.subscriptions if str(s.status).split('.')[-1] == "active"), None)
@@ -474,7 +477,8 @@ async def get_reseller_clients(user: dict = Depends(get_portal_user), db: AsyncS
             "sub_status": str(sub.status).split('.')[-1] if sub else "none",
             "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
             "sub_url": sub.subscription_url if sub else None,
-            "connect_url": f"{base}/connect/{sub.access_token}" if sub and sub.access_token else None,
+            "connect_url": subscription_connect_url(get_settings(), sub) if sub and sub.access_token else None,
+            "short_code": subscription_short_code(sub) if sub and sub.access_token else None,
             "remnawave_uuid": sub.remnawave_uuid if sub else None,
             "device_limit": sub.device_limit if sub else 0
         })
@@ -574,12 +578,13 @@ async def buy_key(req: BuyKeyRequest, user: dict = Depends(get_portal_user), db:
     )
 
     await db.commit()
-    connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
+    connect_url = subscription_connect_url(settings, sub)
     return {
         "status": "ok",
         "client_id": new_client.id,
         "sub_url": sub.subscription_url,
         "connect_url": connect_url,
+        "short_code": subscription_short_code(sub),
     }
 
 class AdminTopupRequest(BaseModel):
@@ -881,14 +886,19 @@ async def admin_all_keys(q: str = "", user: dict = Depends(get_portal_user), db:
         select(Subscription).options(selectinload(Subscription.customer))
         .order_by(desc(Subscription.created_at)).limit(300)
     )).scalars().all()
-    base = get_settings().public_base_url.rstrip("/")
     res = []
     for s in rows:
         cust = s.customer
         name = (cust.full_name if cust else "") or ""
         telegram_id = cust.telegram_id if cust else None
         reseller_id = cust.referrer_id if cust else None
-        if q and q.lower() not in name.lower() and q not in str(telegram_id or ""):
+        short_code = subscription_short_code(s) if s.access_token else ""
+        if (
+            q
+            and q.lower() not in name.lower()
+            and q not in str(telegram_id or "")
+            and q not in short_code
+        ):
             continue
         res.append({
             "uuid": s.remnawave_uuid,
@@ -900,7 +910,8 @@ async def admin_all_keys(q: str = "", user: dict = Depends(get_portal_user), db:
             "sub_status": str(s.status).split(".")[-1],
             "expires_at": s.expires_at.isoformat() if s.expires_at else None,
             "sub_url": s.subscription_url,
-            "connect_url": f"{base}/connect/{s.access_token}" if s.access_token else None,
+            "connect_url": subscription_connect_url(get_settings(), s) if s.access_token else None,
+            "short_code": short_code or None,
             "remnawave_uuid": s.remnawave_uuid,
             "remnawave_short_uuid": s.remnawave_short_uuid,
             "device_limit": s.device_limit,
@@ -1002,8 +1013,13 @@ async def admin_create_key(req: AdminCreateKeyRequest, user: dict = Depends(get_
         "traffic_limit_gb": traffic_gb,
     })
     await db.commit()
-    connect_url = f"{settings.public_base_url.rstrip('/')}/connect/{access_token}"
-    return {"status": "ok", "connect_url": connect_url, "sub_url": sub.subscription_url}
+    connect_url = subscription_connect_url(settings, sub)
+    return {
+        "status": "ok",
+        "connect_url": connect_url,
+        "sub_url": sub.subscription_url,
+        "short_code": subscription_short_code(sub),
+    }
 
 
 # ── Публичные правовые документы (URL для бота и платёжных систем) ────────────
@@ -1199,7 +1215,7 @@ FK_REFERRAL_RATE = 0.30
 
 
 def _connect_url(subscription: Subscription) -> str:
-    return f"{settings.public_base_url.rstrip('/')}/connect/{subscription.access_token}"
+    return subscription_connect_url(settings, subscription)
 
 
 async def _tg_send(telegram_id: int, text: str, reply_markup=None) -> None:
@@ -1664,7 +1680,7 @@ if os.path.isdir(PORTAL_ASSETS_DIR):
 
 
 def _connect_import_path(access_token: str, client: str) -> str:
-    return f"/connect/{access_token}/import/{client}"
+    return f"/{access_token}/import/{client}"
 
 
 def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
@@ -1698,7 +1714,8 @@ def _connect_template_response(
     limit_reached: bool = False,
     device_slots_used: int = 0,
 ) -> HTMLResponse:
-    links = _connect_links(access_token, subscription_url)
+    public_code = subscription_short_code(subscription)
+    links = _connect_links(public_code, subscription_url)
     return CONNECT_TEMPLATES.TemplateResponse(
         request,
         "connect.html",
@@ -1982,7 +1999,6 @@ async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_
         raise HTTPException(403)
         
     clients = (await db.execute(select(Customer).options(selectinload(Customer.subscriptions)).filter_by(referrer_id=reseller_id).order_by(desc(Customer.created_at)))).scalars().all()
-    base = get_settings().public_base_url.rstrip("/")
     res = []
     for c in clients:
         sub = next((s for s in c.subscriptions if str(s.status).split('.')[-1] == "active"), None)
@@ -1994,7 +2010,8 @@ async def get_admin_reseller_clients(reseller_id: int, user: dict = Depends(get_
             "sub_status": str(sub.status).split('.')[-1] if sub else "none",
             "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
             "sub_url": sub.subscription_url if sub else None,
-            "connect_url": f"{base}/connect/{sub.access_token}" if sub and sub.access_token else None,
+            "connect_url": subscription_connect_url(get_settings(), sub) if sub and sub.access_token else None,
+            "short_code": subscription_short_code(sub) if sub and sub.access_token else None,
             "remnawave_uuid": sub.remnawave_uuid if sub else None,
             "device_limit": sub.device_limit if sub else 0
         })
@@ -2145,7 +2162,8 @@ async def renew_reseller_client(
         "expires_at": sub.expires_at.isoformat(),
         "device_limit": sub.device_limit,
         "balance": float(actor.balance_rub),
-        "connect_url": f"{settings.public_base_url.rstrip('/')}/connect/{sub.access_token}",
+        "connect_url": subscription_connect_url(settings, sub),
+        "short_code": subscription_short_code(sub),
     }
 
 @app.delete("/api/reseller/clients/{uuid}")
@@ -2344,6 +2362,25 @@ async def hysteria_auth(req: HysteriaAuthRequest, request: Request, db: AsyncSes
         return {"ok": False, "id": ""}
 
     return {"ok": True, "id": f"sub_{sub.id}"}
+
+
+@app.get("/{access_token}/import/{client_name}", response_class=HTMLResponse)
+async def public_short_connect_import(
+    request: Request,
+    access_token: str,
+    client_name: str,
+    db: AsyncSession = Depends(get_session),
+):
+    return await public_connect_import(request, access_token, client_name, db)
+
+
+@app.get("/{access_token}", response_class=HTMLResponse)
+async def public_short_connect_page(
+    request: Request,
+    access_token: str,
+    db: AsyncSession = Depends(get_session),
+) -> HTMLResponse:
+    return await public_connect_page(request, access_token, db)
 
 
 # Redirect every non-API frontend route to the active partner portal.

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hamalivpn.api import app, get_portal_user, get_session
 from hamalivpn.models import Customer, Subscription, SubscriptionStatus
+from hamalivpn.services import subscription_short_code
 
 
 @pytest.mark.asyncio
@@ -62,5 +63,6 @@ async def test_admin_keys_include_client_management_fields(session_factory) -> N
     assert payload[0]["sub_status"] == "active"
     assert payload[0]["device_limit"] == 1
     assert payload[0]["remnawave_uuid"] == "11111111-1111-4111-8111-111111111111"
-    assert payload[0]["connect_url"].endswith("/connect/access-token-admin-list")
+    assert payload[0]["short_code"] == subscription_short_code("access-token-admin-list")
+    assert payload[0]["connect_url"].endswith(f"/{payload[0]['short_code']}")
     assert payload[0]["reseller_id"] == reseller.id

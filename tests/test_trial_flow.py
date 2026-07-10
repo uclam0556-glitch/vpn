@@ -8,7 +8,9 @@ from hamalivpn.models import Customer, Subscription, SubscriptionStatus
 from hamalivpn.remnawave import MockRemnawaveClient
 from hamalivpn.services import (
     expire_due_subscriptions,
+    get_subscription_by_token,
     issue_trial,
+    subscription_short_code,
 )
 
 
@@ -45,6 +47,7 @@ async def test_trial_is_reissued_by_extending_the_same_subscription(session_fact
         assert subscription.device_limit == 1
         assert subscription.traffic_limit_gb == 0
         assert result.connect_url.host == "vpn.example.com"
+        assert result.connect_url.path == f"/{subscription_short_code(subscription)}"
         original_subscription_id = result.subscription_id
 
     async with session_factory() as session:
@@ -61,6 +64,33 @@ async def test_trial_is_reissued_by_extending_the_same_subscription(session_fact
         assert subscription is not None
         assert subscription.status == SubscriptionStatus.active
         assert subscription.traffic_limit_gb == 0
+
+
+@pytest.mark.asyncio
+async def test_subscription_can_be_resolved_by_full_or_short_token(session_factory) -> None:
+    async with session_factory() as session:
+        customer = Customer(telegram_id=10001, full_name="Short Link User")
+        session.add(customer)
+        await session.flush()
+        subscription = Subscription(
+            customer_id=customer.id,
+            plan_code="test",
+            status=SubscriptionStatus.active,
+            access_token="short-link-token-abcdef123456",
+            device_limit=1,
+            traffic_limit_gb=0,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+        )
+        session.add(subscription)
+        await session.commit()
+
+        by_full = await get_subscription_by_token(session, "short-link-token-abcdef123456")
+        by_short = await get_subscription_by_token(session, subscription_short_code(subscription))
+        by_too_short = await get_subscription_by_token(session, "short")
+
+        assert by_full is not None and by_full.id == subscription.id
+        assert by_short is not None and by_short.id == subscription.id
+        assert by_too_short is None
 
 
 @pytest.mark.asyncio

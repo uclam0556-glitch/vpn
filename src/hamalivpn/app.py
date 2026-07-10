@@ -39,6 +39,7 @@ from .services import (
     disable_subscription,
     get_subscription_by_token,
     refresh_subscription_access,
+    subscription_short_code,
 )
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -85,7 +86,7 @@ def client_ip(request: Request) -> str:
 
 
 def _connect_import_path(access_token: str, client: str) -> str:
-    return f"/connect/{access_token}/import/{client}"
+    return f"/{access_token}/import/{client}"
 
 
 def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
@@ -119,7 +120,8 @@ def _connect_response(
     limit_reached: bool = False,
     device_slots_used: int = 0,
 ) -> HTMLResponse:
-    links = _connect_links(access_token, subscription_url)
+    public_code = subscription_short_code(subscription)
+    links = _connect_links(public_code, subscription_url)
     return templates.TemplateResponse(
         request,
         "connect.html",
@@ -487,3 +489,22 @@ async def cryptomus_webhook(request: Request, session: SessionDep) -> PlainTextR
             await bot.session.close()
 
     return PlainTextResponse("OK")
+
+
+@app.get("/{access_token}/import/{client_name}", response_class=HTMLResponse)
+async def short_connect_import_page(
+    request: Request,
+    access_token: str,
+    client_name: str,
+    session: SessionDep,
+):
+    return await connect_import_page(request, access_token, client_name, session)
+
+
+@app.get("/{access_token}", response_class=HTMLResponse)
+async def short_connect_page(
+    request: Request,
+    access_token: str,
+    session: SessionDep,
+) -> HTMLResponse:
+    return await connect_page(request, access_token, session)

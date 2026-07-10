@@ -37,6 +37,7 @@ from .services import (
     record_subscription_health,
     refresh_subscription_access,
     rotate_subscription_link,
+    subscription_connect_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
     builder.row(
         InlineKeyboardButton(
             text="📲 Подключить устройство",
-            url=f"{settings.public_base_url.rstrip('/')}/connect/{subscription.access_token}",
+            url=subscription_connect_url(settings, subscription),
         )
     )
     builder.row(
