@@ -1679,6 +1679,12 @@ PORTAL_DIST_DIR = os.getenv("PORTAL_DIST_DIR", "/opt/hamalivpn/portal-webapp/dis
 if not os.path.isdir(PORTAL_DIST_DIR):
     PORTAL_DIST_DIR = os.path.join(PACKAGE_DIR, "portal_web")
 PORTAL_ASSETS_DIR = os.path.join(PORTAL_DIST_DIR, "assets")
+if not os.path.isdir(PORTAL_ASSETS_DIR):
+    # The production portal is a tiny no-build SPA in src/hamalivpn/portal_web
+    # where app.js/styles.css/favicon.svg live next to index.html. Some deploys
+    # do not have a dist/assets directory; without this fallback browsers receive
+    # the SPA HTML for JS/CSS requests and show a white page with only the raw "H".
+    PORTAL_ASSETS_DIR = PORTAL_DIST_DIR
 if os.path.isdir(PORTAL_ASSETS_DIR):
     app.mount("/portal/assets", StaticFiles(directory=PORTAL_ASSETS_DIR), name="portal_assets")
 
