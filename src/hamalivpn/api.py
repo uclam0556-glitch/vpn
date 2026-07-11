@@ -38,6 +38,25 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def redirect_legacy_portal_host(request: Request, call_next):
+    """Keep app.hamali.ru as the only public portal entry point.
+
+    portal.hamali.ru used to be exposed directly to the origin VPS. That works
+    from some networks, but in Russia/Caucasus direct OVH routes can fail while
+    the Cloudflare-proxied app.hamali.ru stays reachable. Preserve the path and
+    query so old client/admin links continue to work after DNS is proxied.
+    """
+    host = request.headers.get("host", "").split(":", 1)[0].lower()
+    if host == "portal.hamali.ru":
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(
+            url=f"https://app.hamali.ru{request.url.path}{query}",
+            status_code=308,
+        )
+    return await call_next(request)
+
+
 if not _docs_enabled:
     @app.get("/docs", include_in_schema=False)
     @app.get("/redoc", include_in_schema=False)
