@@ -359,7 +359,7 @@ function clientRow(c) {
   const [label, cls] = SUB_STATUS[c.sub_status] || [c.sub_status, "pending"];
   const dl = daysLeft(c.expires_at);
   const left = dl == null ? "" : dl < 0 ? "истёк" : `${dl} дн.`;
-  return `<div class="row">
+  return `<div class="row row--clickable" data-client='${esc(JSON.stringify(c))}' title="Открыть управление ключом">
       <div class="row__main">
       <div class="row__title">${esc(c.name || "Без имени")} <span class="tag tag--${cls}">${label}</span></div>
       <div class="row__meta">
@@ -784,7 +784,7 @@ function adminKeyRow(k) {
   const dl = daysLeft(k.expires_at);
   const left = dl == null ? "" : dl < 0 ? "истёк" : `${dl} дн.`;
   const name = k.client || k.name || "Без имени";
-  return `<div class="row">
+  return `<div class="row row--clickable" data-client='${esc(JSON.stringify(k))}' title="Открыть управление ключом">
     <div class="row__main">
       <div class="row__title">${esc(name)} <span class="tag tag--${cls}">${label}</span></div>
       <div class="row__meta">

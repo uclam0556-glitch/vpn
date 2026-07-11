@@ -223,6 +223,10 @@ textarea.input { resize: vertical; min-height: 72px; }
   border-radius: var(--radius-sm); background: linear-gradient(180deg, rgba(17, 22, 43, 0.92), rgba(12, 16, 32, 0.86));
   transition: border-color 0.16s ease, transform 0.12s ease, background 0.16s ease, box-shadow 0.16s ease;
 }
+.row--clickable { cursor: pointer; user-select: none; }
+.row--clickable .row__main { cursor: pointer; }
+.row--clickable .row__actions,
+.row--clickable .btn { user-select: auto; }
 .row::before {
   content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 99px;
   background: var(--grad); opacity: 0.5;
