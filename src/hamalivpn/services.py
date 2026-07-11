@@ -26,6 +26,7 @@ class SubscriptionNotFoundError(RuntimeError):
 
 SHORT_LINK_CODE_LENGTH = 16
 _MIN_SHORT_LINK_CODE_LENGTH = 8
+PRODUCTION_PUBLIC_BASE_URL = "https://app.hamali.ru"
 
 
 def subscription_short_code(subscription_or_token: Subscription | str) -> str:
@@ -37,8 +38,32 @@ def subscription_short_code(subscription_or_token: Subscription | str) -> str:
     return access_token[:SHORT_LINK_CODE_LENGTH]
 
 
+def public_connect_base_url(settings: Settings) -> str:
+    """Return the safe public host used in customer-facing subscription links.
+
+    In production the origin VPS and sslip.io URLs are intentionally not used
+    for customers: direct OVH routes are unreliable from some Russian networks,
+    while app.hamali.ru is Cloudflare-proxied and much more reachable.
+    """
+    base_url = settings.public_base_url.rstrip("/") or PRODUCTION_PUBLIC_BASE_URL
+    if not settings.is_production:
+        return base_url
+
+    lower_base_url = base_url.lower()
+    unsafe_markers = (
+        "57.129.43.105",
+        "sslip.io",
+        "portal.hamali.ru",
+        "localhost",
+        "127.0.0.1",
+    )
+    if any(marker in lower_base_url for marker in unsafe_markers):
+        return PRODUCTION_PUBLIC_BASE_URL
+    return base_url
+
+
 def subscription_connect_url(settings: Settings, subscription_or_token: Subscription | str) -> str:
-    return f"{settings.public_base_url.rstrip('/')}/{subscription_short_code(subscription_or_token)}"
+    return f"{public_connect_base_url(settings)}/{subscription_short_code(subscription_or_token)}"
 
 
 def _remote_username(telegram_id: int) -> str:
