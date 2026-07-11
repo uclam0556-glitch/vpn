@@ -3,10 +3,18 @@
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
 const KEY_STORE = "hamali_portal_key";
+const API_TIMEOUT_MS = 12000;
 
 const state = { me: null, tab: null, cache: {} };
 
 let memoryKey = "";
+
+function markBootReady() {
+  if (window.__hamaliBootFallback) {
+    clearTimeout(window.__hamaliBootFallback);
+    window.__hamaliBootFallback = null;
+  }
+}
 
 function getStorage() {
   try {
@@ -37,14 +45,29 @@ const clearKey = () => {
 };
 
 async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(`/api${path}`, {
-    method,
-    headers: {
-      ...(body ? { "Content-Type": "application/json" } : {}),
-      Authorization: `Bearer ${getKey()}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(`/api${path}`, {
+      method,
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: {
+        ...(body ? { "Content-Type": "application/json" } : {}),
+        Authorization: `Bearer ${getKey()}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    if (err && err.name === "AbortError") {
+      throw new Error("Портал не получил ответ от сервера за 12 секунд. Отключите проблемный VPN, обновите страницу или откройте app.hamali.ru через другую сеть.");
+    }
+    throw new Error("Нет соединения с сервером портала. Проверьте сеть/VPN и попробуйте ещё раз.");
+  } finally {
+    clearTimeout(timeout);
+  }
   if (res.status === 401) {
     clearKey();
     renderLogin("Ключ недействителен");
@@ -125,6 +148,7 @@ const closeModal = () => {
 
 // ── login ────────────────────────────────────────────────────────────────
 function renderLogin(error = "") {
+  markBootReady();
   app.innerHTML = `
     <div class="login">
       <form class="login__card" id="loginForm">
@@ -166,6 +190,7 @@ function renderLogin(error = "") {
 }
 
 function renderFatal(error = "") {
+  markBootReady();
   const message = error ? String(error).slice(0, 180) : "Не удалось загрузить кабинет";
   app.innerHTML = `
     <div class="login">
@@ -192,6 +217,7 @@ function tabsFor(role) {
 }
 
 function renderShell() {
+  markBootReady();
   const role = state.me.role;
   const tabs = tabsFor(role);
   if (!state.tab) state.tab = tabs[0][0];
@@ -911,7 +937,7 @@ document.addEventListener("click", (e) => {
 async function boot() {
   if (!getKey()) return renderLogin();
   try { state.me = await api("/portal/me"); renderShell(); }
-  catch (err) { if (err.message !== "unauthorized") renderLogin(); }
+  catch (err) { if (err.message !== "unauthorized") renderFatal(err.message); }
 }
 window.addEventListener("error", (event) => {
   renderFatal(event.message || "Ошибка интерфейса");

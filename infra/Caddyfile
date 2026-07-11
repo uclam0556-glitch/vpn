@@ -40,6 +40,20 @@
 	encode zstd gzip
 	reverse_proxy 172.17.0.1:8001
 
+	@portal_dynamic {
+		path / /api/* /portal* /connect/*
+	}
+	header @portal_dynamic {
+		Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+		Pragma "no-cache"
+		Expires "0"
+	}
+
+	@portal_assets {
+		path /portal/assets/* /static/*
+	}
+	header @portal_assets Cache-Control "public, max-age=900"
+
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"

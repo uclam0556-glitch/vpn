@@ -6,7 +6,17 @@
   <meta name="theme-color" content="#0a0b14" />
   <title>HamaliVPN · Партнёрский кабинет</title>
   <link rel="icon" type="image/svg+xml" href="/portal/assets/favicon.svg" />
-  <link rel="stylesheet" href="/portal/assets/styles.css?v=14" />
+  <style>
+    html,body{margin:0;min-height:100%;background:#07080f;color:#eef1ff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+    .boot,.boot-fallback{min-height:100vh;display:grid;place-content:center;justify-items:center;gap:20px;padding:24px;text-align:center}
+    .boot__logo{width:64px;height:64px;border-radius:18px;display:grid;place-content:center;font-weight:900;font-size:30px;color:#07080f;background:linear-gradient(135deg,#a58cff,#51fff1 55%,#ffe49a)}
+    .boot__spin{width:26px;height:26px;border-radius:50%;border:3px solid rgba(255,255,255,.18);border-top-color:#8a6cff;animation:spin .8s linear infinite}
+    .boot-fallback__card{width:min(420px,100%);border:1px solid rgba(255,255,255,.12);border-radius:24px;background:rgba(18,22,42,.82);padding:28px;box-shadow:0 24px 70px -30px #000}
+    .boot-fallback__card h1{font-size:22px;margin:0 0 8px}.boot-fallback__card p{color:#a1a7ca;margin:0 0 18px;line-height:1.5}
+    .boot-fallback__card button,.boot-fallback__card a{display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:14px;padding:12px 16px;font-weight:800;color:#07080f;background:linear-gradient(135deg,#8a6cff,#51fff1);text-decoration:none}
+    @keyframes spin{to{transform:rotate(360deg)}}
+  </style>
+  <link rel="stylesheet" href="/portal/assets/styles.css?v=15" />
 </head>
 <body>
   <div id="app" class="app">
@@ -16,6 +26,13 @@
     </div>
   </div>
   <div id="toast" class="toast" aria-live="polite"></div>
-  <script type="module" src="/portal/assets/app.js?v=15"></script>
+  <script>
+    window.__hamaliBootFallback = setTimeout(function () {
+      var root = document.getElementById("app");
+      if (!root || !root.querySelector(".boot")) return;
+      root.innerHTML = '<div class="boot-fallback"><div class="boot-fallback__card"><div class="boot__logo" style="margin:0 auto 16px">H</div><h1>Портал долго загружается</h1><p>Сеть или VPN не отдали файлы кабинета. Обновите страницу, выключите проблемный VPN или откройте через другую сеть.</p><button onclick="location.reload()">Обновить</button></div></div>';
+    }, 15000);
+  </script>
+  <script type="module" src="/portal/assets/app.js?v=16"></script>
 </body>
 </html>

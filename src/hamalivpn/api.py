@@ -57,6 +57,32 @@ async def redirect_legacy_portal_host(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def portal_cache_policy(request: Request, call_next):
+    """Avoid stale portal/connect pages on mobile clients and VPN networks.
+
+    The public portal is often opened inside in-app browsers and through
+    unstable VPN paths. Dynamic HTML/API must never be cached by Cloudflare or
+    a browser, while versioned assets may be cached shortly.
+    """
+    response = await call_next(request)
+    path = request.url.path
+
+    if (
+        path == "/"
+        or path.startswith("/api/")
+        or path.startswith("/portal")
+        or path.startswith("/connect/")
+    ):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    elif path.startswith("/static/"):
+        response.headers.setdefault("Cache-Control", "public, max-age=900")
+
+    return response
+
+
 if not _docs_enabled:
     @app.get("/docs", include_in_schema=False)
     @app.get("/redoc", include_in_schema=False)
