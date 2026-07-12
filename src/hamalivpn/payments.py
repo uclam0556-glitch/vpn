@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import os
+import secrets
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
@@ -30,7 +31,7 @@ from .models import (
     SubscriptionStatus,
     as_utc,
 )
-from .remnawave import RemnawaveError, make_remnawave_gateway
+from .remnawave import RemnawaveError, RemnawaveNotFoundError, make_remnawave_gateway
 from .services import get_latest_subscription, issue_trial
 
 logger = logging.getLogger(__name__)
@@ -398,13 +399,25 @@ async def successful_payment(message: Message) -> None:
             # Extend in Remnawave
             if subscription.remnawave_uuid:
                 try:
-                    remote = await gateway.update_user_access(
-                        user_uuid=subscription.remnawave_uuid,
-                        expires_at=new_expires,
-                        device_limit=subscription.device_limit,
-                        traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
-                        squads=settings.squad_uuids,
-                    )
+                    try:
+                        remote = await gateway.update_user_access(
+                            user_uuid=subscription.remnawave_uuid,
+                            expires_at=new_expires,
+                            device_limit=subscription.device_limit,
+                            traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
+                            squads=settings.squad_uuids,
+                        )
+                    except RemnawaveNotFoundError:
+                        remote = await gateway.create_user(
+                            username=f"tg_{message.from_user.id}_{secrets.token_hex(3)}",
+                            telegram_id=message.from_user.id,
+                            expires_at=new_expires,
+                            device_limit=subscription.device_limit,
+                            traffic_limit_bytes=subscription.traffic_limit_gb * 1024**3,
+                            squads=settings.squad_uuids,
+                            description=f"HamaliVPN payment recovery; local_subscription={subscription.id}",
+                        )
+                        subscription.remnawave_uuid = remote.uuid
                     subscription.subscription_url = remote.subscription_url
                     subscription.remnawave_short_uuid = remote.short_uuid
                     await prune_hwid_devices_to_limit(

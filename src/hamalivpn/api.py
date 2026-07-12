@@ -406,7 +406,7 @@ from .models import (
     utcnow,
 )
 from .qr import qr_data_uri
-from .remnawave import make_remnawave_gateway
+from .remnawave import RemnawaveNotFoundError, make_remnawave_gateway
 from .services import (
     get_subscription_by_token,
     subscription_connect_url,
@@ -1394,12 +1394,24 @@ async def _fk_fulfill(order_id: str) -> None:
             await db.commit()
             if sub.remnawave_uuid:
                 try:
-                    remote = await gateway.update_user_access(
-                        user_uuid=sub.remnawave_uuid, expires_at=new_exp,
-                        device_limit=sub.device_limit,
-                        traffic_limit_bytes=sub.traffic_limit_gb * 1024**3,
-                        squads=settings.squad_uuids,
-                    )
+                    try:
+                        remote = await gateway.update_user_access(
+                            user_uuid=sub.remnawave_uuid, expires_at=new_exp,
+                            device_limit=sub.device_limit,
+                            traffic_limit_bytes=sub.traffic_limit_gb * 1024**3,
+                            squads=settings.squad_uuids,
+                        )
+                    except RemnawaveNotFoundError:
+                        remote = await gateway.create_user(
+                            username=f"tg_{customer.telegram_id}_{secrets.token_hex(3)}",
+                            telegram_id=customer.telegram_id,
+                            expires_at=new_exp,
+                            device_limit=sub.device_limit,
+                            traffic_limit_bytes=sub.traffic_limit_gb * 1024**3,
+                            squads=settings.squad_uuids,
+                            description=f"HamaliVPN paid recovery; local_subscription={sub.id}",
+                        )
+                        sub.remnawave_uuid = remote.uuid
                     sub.subscription_url = remote.subscription_url
                     sub.remnawave_short_uuid = remote.short_uuid
                     await prune_hwid_devices_to_limit(
