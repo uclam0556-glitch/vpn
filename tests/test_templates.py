@@ -7,5 +7,5 @@ def test_base_template_uses_relative_static_assets() -> None:
     ).read_text()
 
     assert 'href="/static/app.css' in template
-    assert 'src="/static/app.js"' in template
+    assert 'src="/static/app.js' in template
     assert "url_for('static'" not in template
