@@ -6,6 +6,7 @@ from hamalivpn.config import Settings
 from hamalivpn.device_slots import (
     DeviceLimitReached,
     active_device_slot_count,
+    device_subscription_url,
     ensure_device_slot,
 )
 from hamalivpn.models import Customer, Subscription, SubscriptionDevice, SubscriptionStatus
@@ -41,6 +42,29 @@ async def create_subscription(session, *, device_limit: int) -> Subscription:
     session.add(subscription)
     await session.flush()
     return subscription
+
+
+def test_device_subscription_url_uses_public_host() -> None:
+    settings = make_settings()
+    subscription = Subscription(
+        customer_id="customer-id",
+        plan_code="test",
+        status=SubscriptionStatus.active,
+        access_token="access-token",
+        device_limit=1,
+        traffic_limit_gb=0,
+        expires_at=datetime.now(UTC) + timedelta(days=30),
+        subscription_url="https://panel.example.com/api/sub/origin-token",
+    )
+    slot = SubscriptionDevice(
+        subscription_id="subscription-id",
+        device_token="opaque-device-token",
+        is_active=True,
+    )
+
+    assert device_subscription_url(settings, subscription, slot) == (
+        "https://app.example.com/api/sub/opaque-device-token"
+    )
 
 
 @pytest.mark.asyncio

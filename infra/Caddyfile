@@ -38,7 +38,16 @@
 
 {$CABINET_HOST}, {$CABINET_FALLBACK_HOST}, portal.hamali.ru {
 	encode zstd gzip
-	reverse_proxy 172.17.0.1:8001
+
+	# Keep subscription imports on the same Cloudflare-proxied public host as
+	# the activation page. This avoids exposing the panel/origin route to users.
+	handle /api/sub/* {
+		reverse_proxy 172.17.0.1:8000
+	}
+
+	handle {
+		reverse_proxy 172.17.0.1:8001
+	}
 
 	@portal_dynamic {
 		path / /api/* /portal* /connect/*

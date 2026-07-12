@@ -1,7 +1,5 @@
 import secrets
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
-
 from sqlalchemy import asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,11 +64,13 @@ def device_subscription_url(settings: Settings, subscription: Subscription, slot
     opaque device_token. The local sub_injector resolves that token to the real
     shortUuid and injects the per-device Hysteria auth.
     """
-    base = settings.panel_base_url.rstrip()
-    source_url = (subscription.subscription_url or "").strip()
-    if "/api/sub/" in source_url:
-        parsed = urlsplit(source_url)
-        base = f"{parsed.scheme}://{parsed.netloc}"
+    # Customer devices must never import a direct Remnawave/origin URL. Those
+    # routes are unreliable from some Russian mobile networks. The public app
+    # host is Cloudflare-proxied and Caddy forwards only /api/sub/* to the local
+    # injector, which still resolves the opaque per-device token server-side.
+    base = settings.public_base_url.rstrip("/")
+    if settings.is_production:
+        base = "https://app.hamali.ru"
     return f"{base}/api/sub/{slot.device_token}"
 
 
