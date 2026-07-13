@@ -31,30 +31,11 @@ logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app.hamali.ru"],
+    allow_origins=["https://app.hamali.ru", "https://portal.hamali.ru"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.middleware("http")
-async def redirect_legacy_portal_host(request: Request, call_next):
-    """Keep app.hamali.ru as the only public portal entry point.
-
-    portal.hamali.ru used to be exposed directly to the origin VPS. That works
-    from some networks, but in Russia/Caucasus direct OVH routes can fail while
-    the Cloudflare-proxied app.hamali.ru stays reachable. Preserve the path and
-    query so old client/admin links continue to work after DNS is proxied.
-    """
-    host = request.headers.get("host", "").split(":", 1)[0].lower()
-    if host == "portal.hamali.ru":
-        query = f"?{request.url.query}" if request.url.query else ""
-        return RedirectResponse(
-            url=f"https://app.hamali.ru{request.url.path}{query}",
-            status_code=308,
-        )
-    return await call_next(request)
 
 
 @app.middleware("http")

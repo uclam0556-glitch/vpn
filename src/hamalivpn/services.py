@@ -26,7 +26,7 @@ class SubscriptionNotFoundError(RuntimeError):
 
 SHORT_LINK_CODE_LENGTH = 16
 _MIN_SHORT_LINK_CODE_LENGTH = 8
-PRODUCTION_PUBLIC_BASE_URL = "https://app.hamali.ru"
+PRODUCTION_PUBLIC_BASE_URL = "https://portal.hamali.ru"
 
 
 def subscription_short_code(subscription_or_token: Subscription | str) -> str:
@@ -41,9 +41,9 @@ def subscription_short_code(subscription_or_token: Subscription | str) -> str:
 def public_connect_base_url(settings: Settings) -> str:
     """Return the safe public host used in customer-facing subscription links.
 
-    In production the origin VPS and sslip.io URLs are intentionally not used
-    for customers: direct OVH routes are unreliable from some Russian networks,
-    while app.hamali.ru is Cloudflare-proxied and much more reachable.
+    Customer activation uses the DNS-only portal host. It is intentionally
+    independent from the Cloudflare-proxied cabinet host because HTTPS to some
+    Cloudflare edges is intermittently unavailable from Russian mobile ISPs.
     """
     base_url = settings.public_base_url.rstrip("/") or PRODUCTION_PUBLIC_BASE_URL
     if not settings.is_production:
@@ -53,7 +53,6 @@ def public_connect_base_url(settings: Settings) -> str:
     unsafe_markers = (
         "57.129.43.105",
         "sslip.io",
-        "portal.hamali.ru",
         "localhost",
         "127.0.0.1",
     )

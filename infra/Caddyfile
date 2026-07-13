@@ -81,5 +81,5 @@ http://app.hamali.ru {
 }
 
 http://portal.hamali.ru {
-	redir https://app.hamali.ru{uri} 308
+	redir https://portal.hamali.ru{uri} 308
 }

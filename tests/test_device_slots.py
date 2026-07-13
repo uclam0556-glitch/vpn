@@ -67,6 +67,29 @@ def test_device_subscription_url_uses_public_host() -> None:
     )
 
 
+def test_device_subscription_url_uses_direct_portal_in_production() -> None:
+    settings = make_settings()
+    settings.environment = "production"
+    subscription = Subscription(
+        customer_id="customer-id",
+        plan_code="test",
+        status=SubscriptionStatus.active,
+        access_token="access-token",
+        device_limit=1,
+        traffic_limit_gb=0,
+        expires_at=datetime.now(UTC) + timedelta(days=30),
+    )
+    slot = SubscriptionDevice(
+        subscription_id="subscription-id",
+        device_token="opaque-device-token",
+        is_active=True,
+    )
+
+    assert device_subscription_url(settings, subscription, slot) == (
+        "https://portal.hamali.ru/api/sub/opaque-device-token"
+    )
+
+
 @pytest.mark.asyncio
 async def test_one_device_plan_allows_same_slot_reuse(session_factory) -> None:
     settings = make_settings()
