@@ -11,6 +11,7 @@ from hamalivpn.device_slots import (
 )
 from hamalivpn.models import Customer, Subscription, SubscriptionDevice, SubscriptionStatus
 from hamalivpn.remnawave import MockRemnawaveClient
+from hamalivpn.services import public_connect_base_url
 
 
 def make_settings() -> Settings:
@@ -88,6 +89,14 @@ def test_device_subscription_url_uses_direct_portal_in_production() -> None:
     assert device_subscription_url(settings, subscription, slot) == (
         "https://portal.hamali.ru/api/sub/opaque-device-token"
     )
+
+
+def test_public_connect_base_ignores_stale_production_env_host() -> None:
+    settings = make_settings()
+    settings.environment = "production"
+    settings.public_base_url = "https://app.hamali.ru"
+
+    assert public_connect_base_url(settings) == "https://portal.hamali.ru"
 
 
 @pytest.mark.asyncio

@@ -45,20 +45,11 @@ def public_connect_base_url(settings: Settings) -> str:
     independent from the Cloudflare-proxied cabinet host because HTTPS to some
     Cloudflare edges is intermittently unavailable from Russian mobile ISPs.
     """
-    base_url = settings.public_base_url.rstrip("/") or PRODUCTION_PUBLIC_BASE_URL
-    if not settings.is_production:
-        return base_url
-
-    lower_base_url = base_url.lower()
-    unsafe_markers = (
-        "57.129.43.105",
-        "sslip.io",
-        "localhost",
-        "127.0.0.1",
-    )
-    if any(marker in lower_base_url for marker in unsafe_markers):
+    if settings.is_production:
+        # Do not let an old PUBLIC_BASE_URL silently move customer links back
+        # to Cloudflare or sslip.io after a deployment.
         return PRODUCTION_PUBLIC_BASE_URL
-    return base_url
+    return settings.public_base_url.rstrip("/") or PRODUCTION_PUBLIC_BASE_URL
 
 
 def subscription_connect_url(settings: Settings, subscription_or_token: Subscription | str) -> str:
