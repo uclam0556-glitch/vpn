@@ -1,0 +1,15 @@
+[Unit]
+Description=HamaliVPN subscription injector
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hamaliadmin
+WorkingDirectory=/opt/hamalivpn
+ExecStart=/usr/bin/python3 /opt/hamalivpn/sub_injector.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

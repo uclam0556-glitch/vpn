@@ -72,6 +72,21 @@
 	}
 }
 
+# Direct subscription endpoint: no portal frontend, JavaScript or auth page.
+{$SUBSCRIPTION_HOST} {
+	encode zstd gzip
+	reverse_proxy 172.17.0.1:8000
+
+	header {
+		Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+		Access-Control-Allow-Origin "*"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}
+
 de.hamali.ru {
 	reverse_proxy 92.119.166.192:8080
 }

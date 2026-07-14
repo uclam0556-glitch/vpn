@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import Settings
 from .device_slots import deactivate_subscription_slots, sync_subscription_device_slots
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
+from .public_urls import public_connect_base_url, public_connect_base_urls
 from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 from .schemas import TrialResult
 from .subscription_health import SubscriptionProbeResult, probe_subscription_url
@@ -26,7 +27,6 @@ class SubscriptionNotFoundError(RuntimeError):
 
 SHORT_LINK_CODE_LENGTH = 16
 _MIN_SHORT_LINK_CODE_LENGTH = 8
-PRODUCTION_PUBLIC_BASE_URL = "https://portal.hamali.ru"
 
 
 def subscription_short_code(subscription_or_token: Subscription | str) -> str:
@@ -38,22 +38,16 @@ def subscription_short_code(subscription_or_token: Subscription | str) -> str:
     return access_token[:SHORT_LINK_CODE_LENGTH]
 
 
-def public_connect_base_url(settings: Settings) -> str:
-    """Return the safe public host used in customer-facing subscription links.
-
-    Customer activation uses the DNS-only portal host. It is intentionally
-    independent from the Cloudflare-proxied cabinet host because HTTPS to some
-    Cloudflare edges is intermittently unavailable from Russian mobile ISPs.
-    """
-    if settings.is_production:
-        # Do not let an old PUBLIC_BASE_URL silently move customer links back
-        # to Cloudflare or sslip.io after a deployment.
-        return PRODUCTION_PUBLIC_BASE_URL
-    return settings.public_base_url.rstrip("/") or PRODUCTION_PUBLIC_BASE_URL
-
-
 def subscription_connect_url(settings: Settings, subscription_or_token: Subscription | str) -> str:
-    return f"{public_connect_base_url(settings)}/{subscription_short_code(subscription_or_token)}"
+    return subscription_connect_urls(settings, subscription_or_token)[0]
+
+
+def subscription_connect_urls(
+    settings: Settings,
+    subscription_or_token: Subscription | str,
+) -> tuple[str, ...]:
+    code = subscription_short_code(subscription_or_token)
+    return tuple(f"{base}/{code}" for base in public_connect_base_urls(settings))
 
 
 def _remote_username(telegram_id: int) -> str:

@@ -64,7 +64,7 @@ def test_device_subscription_url_uses_public_host() -> None:
     )
 
     assert device_subscription_url(settings, subscription, slot) == (
-        "https://app.example.com/api/sub/opaque-device-token"
+        "https://app.example.com/opaque-device-token"
     )
 
 
@@ -87,7 +87,7 @@ def test_device_subscription_url_uses_direct_portal_in_production() -> None:
     )
 
     assert device_subscription_url(settings, subscription, slot) == (
-        "https://portal.hamali.ru/api/sub/opaque-device-token"
+        "https://sub.hamali.ru/opaque-device-token"
     )
 
 

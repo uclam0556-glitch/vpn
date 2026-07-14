@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings
 from .models import AuditLog, Customer, Subscription, SubscriptionDevice, SubscriptionStatus, as_utc, utcnow
+from .public_urls import public_subscription_base_urls
 from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 
 
@@ -64,14 +65,20 @@ def device_subscription_url(settings: Settings, subscription: Subscription, slot
     opaque device_token. The local sub_injector resolves that token to the real
     shortUuid and injects the per-device Hysteria auth.
     """
-    # Customer devices never import a Remnawave/sslip.io URL. The dedicated
-    # portal hostname is DNS-only and remains usable when a Russian ISP has
-    # trouble reaching the Cloudflare edge used by the main cabinet. Caddy
-    # forwards only /api/sub/* to the local injector.
-    base = settings.public_base_url.rstrip("/")
-    if settings.is_production:
-        base = "https://portal.hamali.ru"
-    return f"{base}/api/sub/{slot.device_token}"
+    # Import links use a dedicated subscription hostname and go straight to
+    # the injector. No portal HTML or JavaScript is involved.
+    return device_subscription_urls(settings, subscription, slot)[0]
+
+
+def device_subscription_urls(
+    settings: Settings,
+    subscription: Subscription,
+    slot: SubscriptionDevice,
+) -> tuple[str, ...]:
+    return tuple(
+        f"{base}/{slot.device_token}"
+        for base in public_subscription_base_urls(settings)
+    )
 
 
 async def get_device_slot_by_token(

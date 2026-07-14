@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
 
     public_base_url: str = "http://localhost:8080"
+    # Public activation endpoints. In production, configure the fallback on a
+    # different provider/ASN so an ISP route failure cannot take down both.
+    activation_base_url: str = ""
+    activation_fallback_base_url: str = ""
+    subscription_base_url: str = ""
+    subscription_fallback_base_url: str = ""
     panel_base_url: str = "http://localhost:3000"
     remnawave_api_token: SecretStr = SecretStr("")
     remnawave_mock: bool = True
