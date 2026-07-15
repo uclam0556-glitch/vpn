@@ -228,10 +228,11 @@ async def setup_requisites_prompt(callback: CallbackQuery, state: FSMContext) ->
     await state.update_data(method=method)
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="← Отмена", callback_data="menu:referrals"))
-    await callback.message.edit_text(
+    await _show(
+        callback,
         f"🧾 <b>{METHODS.get(method, method)}</b>\n\n"
         f"Отправьте {REQ_HINT.get(method, 'реквизиты')} одним сообщением:",
-        reply_markup=b.as_markup(), parse_mode="HTML",
+        b.as_markup(),
     )
 
 
@@ -298,9 +299,10 @@ async def withdraw(callback: CallbackQuery) -> None:
         except Exception:
             pass
     b = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
-    await callback.message.edit_text(
+    await _show(
+        callback,
         f"✅ <b>Заявка на {amount} ₽ отправлена!</b>\n\nОбычно выплата в течение 24 часов.",
-        reply_markup=b.as_markup(), parse_mode="HTML",
+        b.as_markup(),
     )
 
 
