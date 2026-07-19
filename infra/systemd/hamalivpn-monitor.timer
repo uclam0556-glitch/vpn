@@ -1,0 +1,12 @@
+[Unit]
+Description=Run HamaliVPN health monitor every 3 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+AccuracySec=15s
+Persistent=true
+Unit=hamalivpn-monitor.service
+
+[Install]
+WantedBy=timers.target

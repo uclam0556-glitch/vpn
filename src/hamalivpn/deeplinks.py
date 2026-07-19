@@ -3,7 +3,7 @@ import logging
 import os
 import shutil
 import subprocess
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,25 @@ def streisand_deeplink(subscription_url: str) -> str:
     return f"streisand://import/{encoded_url}"
 
 
+def with_query_parameter(url: str, name: str, value: str) -> str:
+    """Return *url* with one idempotently replaced query parameter."""
+
+    parsed = urlsplit(url)
+    query = [
+        (key, item) for key, item in parse_qsl(parsed.query, keep_blank_values=True) if key != name
+    ]
+    query.append((name, value))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)
+    )
+
+
+def incy_subscription_url(subscription_url: str) -> str:
+    """Dedicated subscription URL that asks the injector for INCY-safe links."""
+
+    return with_query_parameter(subscription_url, "client", "incy") if subscription_url else ""
+
+
 def incy_deeplink(subscription_url: str, name: str = "HamaliVPN") -> str:
     """INCY encrypted import link.
 
@@ -51,6 +70,7 @@ def incy_deeplink(subscription_url: str, name: str = "HamaliVPN") -> str:
     if not node_bin:
         return ""
 
+    dedicated_url = incy_subscription_url(subscription_url)
     script = """
 const { encryptLink } = require('@incy/link-encoder');
 const payload = JSON.parse(process.argv[1]);
@@ -59,7 +79,7 @@ process.stdout.write(encryptLink(payload.url, { name: payload.name || 'HamaliVPN
 
     try:
         result = subprocess.run(
-            [node_bin, "-e", script, json.dumps({"url": subscription_url, "name": name})],
+            [node_bin, "-e", script, json.dumps({"url": dedicated_url, "name": name})],
             check=True,
             capture_output=True,
             text=True,

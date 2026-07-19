@@ -7,9 +7,21 @@ from hamalivpn.device_limits import prune_hwid_devices_to_limit
 async def test_prune_hwid_devices_keeps_first_activated_slots_by_default() -> None:
     deleted: list[str] = []
     devices = [
-        {"hwid": "first", "createdAt": "2026-06-01T10:00:00.000Z", "updatedAt": "2026-06-03T10:00:00.000Z"},
-        {"hwid": "second", "createdAt": "2026-06-02T10:00:00.000Z", "updatedAt": "2026-06-02T10:00:00.000Z"},
-        {"hwid": "third", "createdAt": "2026-06-03T10:00:00.000Z", "updatedAt": "2026-06-01T10:00:00.000Z"},
+        {
+            "hwid": "first",
+            "createdAt": "2026-06-01T10:00:00.000Z",
+            "updatedAt": "2026-06-03T10:00:00.000Z",
+        },
+        {
+            "hwid": "second",
+            "createdAt": "2026-06-02T10:00:00.000Z",
+            "updatedAt": "2026-06-02T10:00:00.000Z",
+        },
+        {
+            "hwid": "third",
+            "createdAt": "2026-06-03T10:00:00.000Z",
+            "updatedAt": "2026-06-01T10:00:00.000Z",
+        },
     ]
 
     async def list_devices(_: str) -> list[dict]:

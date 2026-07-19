@@ -44,3 +44,14 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
+ignore = [
+  # FastAPI/aiogram intentionally declare dependency/filter factories in signatures.
+  "B008",
+  # Ruff's formatter deliberately leaves long URLs and translated UI strings intact.
+  "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# This legacy aggregate module is being split into routers incrementally; imports
+# remain next to the route groups they support to avoid a risky all-at-once move.
+"src/hamalivpn/api.py" = ["E402"]

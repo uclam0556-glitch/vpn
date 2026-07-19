@@ -3,26 +3,28 @@ import html
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
-    CallbackQuery,
     BotCommand,
+    CallbackQuery,
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    MenuButtonDefault,
+    MenuButtonWebApp,
     Message,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
-from . import payments, referrals
+from . import integration, payments, referrals
 from .config import get_settings
 from .db import SessionFactory, create_schema
 from .models import Customer, Subscription, SubscriptionStatus, as_utc
@@ -45,6 +47,7 @@ settings = get_settings()
 router = Router()
 router.include_router(payments.router)
 router.include_router(referrals.router)
+router.include_router(integration.integration_router)
 
 BANNER = Path(__file__).resolve().parent / "static" / "banner.png"
 PREMIUM_EMOJI_KEYS = [
@@ -110,11 +113,13 @@ class TapThrottleMiddleware(BaseMiddleware):
         self._last_seen[user.id] = now
         return await handler(event, data)
 
+
 def support_url() -> str:
     return f"https://t.me/{settings.support_username.lstrip('@')}"
 
 
 # ── тексты ─────────────────────────────────────────────────────────────────
+
 
 def welcome_text(name: str) -> str:
     return (
@@ -212,6 +217,7 @@ def refresh_success_text(response_ms: int) -> str:
 
 # ── клавиатуры ─────────────────────────────────────────────────────────────
 
+
 def home_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -298,7 +304,7 @@ async def start(message: Message, command: CommandObject) -> None:
                     telegram_id=message.from_user.id,
                     telegram_username=message.from_user.username,
                     full_name=message.from_user.full_name or "",
-                    referrer_id=None # We need the local DB ID of the referrer, not telegram_id
+                    referrer_id=None,  # We need the local DB ID of the referrer, not telegram_id
                 )
 
                 # Resolve referrer DB ID
@@ -734,6 +740,7 @@ async def connection_help(callback: CallbackQuery) -> None:
 
 # ── документы (Политика и Соглашение) ───────────────────────────────────────
 
+
 def docs_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -765,7 +772,9 @@ async def docs_menu(callback: CallbackQuery) -> None:
     )
     kb = docs_menu_keyboard()
     if callback.message.photo:
-        await callback.message.edit_caption(caption=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        await callback.message.edit_caption(
+            caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
+        )
     else:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
@@ -781,9 +790,11 @@ async def main() -> None:
     if settings.auto_create_schema:
         await create_schema()
     bot = Bot(token=token)
-    # Убрать web-app кнопку «Личный кабинет» слева от поля ввода (menu button).
     try:
-        await bot.set_chat_menu_button(menu_button=MenuButtonDefault())
+        cabinet_url = f"{settings.activation_base_url.rstrip('/')}/tma/"
+        await bot.set_chat_menu_button(
+            menu_button=MenuButtonWebApp(text="Личный кабинет", web_app=WebAppInfo(url=cabinet_url))
+        )
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось сбросить menu button", exc_info=True)
     try:

@@ -62,7 +62,9 @@ def _mask_requisites(value: str | None) -> str:
     return f"{value[:4]}••••{value[-4:]}"
 
 
-async def _ensure_customer(tg_id: int, username: str | None = None, full_name: str = "") -> Customer:
+async def _ensure_customer(
+    tg_id: int, username: str | None = None, full_name: str = ""
+) -> Customer:
     async with SessionFactory() as s:
         customer = await s.scalar(select(Customer).where(Customer.telegram_id == tg_id))
         if customer is None:
@@ -217,7 +219,9 @@ async def setup_method(callback: CallbackQuery) -> None:
     for code, name in METHODS.items():
         b.row(InlineKeyboardButton(text=name, callback_data=f"ref:method:{code}"))
     b.row(InlineKeyboardButton(text="← Назад", callback_data="menu:referrals"))
-    await _show(callback, "🏦 <b>Способ вывода</b>\n\nВыберите, куда выводить бонусы:", b.as_markup())
+    await _show(
+        callback, "🏦 <b>Способ вывода</b>\n\nВыберите, куда выводить бонусы:", b.as_markup()
+    )
 
 
 @router.callback_query(F.data.startswith("ref:method:"))
@@ -228,11 +232,11 @@ async def setup_requisites_prompt(callback: CallbackQuery, state: FSMContext) ->
     await state.update_data(method=method)
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="← Отмена", callback_data="menu:referrals"))
-    await _show(
-        callback,
+    await callback.message.edit_text(
         f"🧾 <b>{METHODS.get(method, method)}</b>\n\n"
         f"Отправьте {REQ_HINT.get(method, 'реквизиты')} одним сообщением:",
-        b.as_markup(),
+        reply_markup=b.as_markup(),
+        parse_mode="HTML",
     )
 
 
@@ -246,7 +250,9 @@ async def save_requisites(message: Message, state: FSMContext) -> None:
         await message.answer("Реквизиты пустые. Откройте «Бонусы» и попробуйте снова.")
         return
     async with SessionFactory() as s:
-        customer = await s.scalar(select(Customer).where(Customer.telegram_id == message.from_user.id))
+        customer = await s.scalar(
+            select(Customer).where(Customer.telegram_id == message.from_user.id)
+        )
         if customer:
             customer.withdrawal_method = method
             customer.withdrawal_requisites = requisites
@@ -264,7 +270,9 @@ async def save_requisites(message: Message, state: FSMContext) -> None:
 @router.callback_query(F.data == "ref:withdraw")
 async def withdraw(callback: CallbackQuery) -> None:
     async with SessionFactory() as s:
-        customer = await s.scalar(select(Customer).where(Customer.telegram_id == callback.from_user.id))
+        customer = await s.scalar(
+            select(Customer).where(Customer.telegram_id == callback.from_user.id)
+        )
         if not customer or customer.balance_rub < MIN_WITHDRAWAL:
             await callback.answer(f"Минимум для вывода — {MIN_WITHDRAWAL} ₽.", show_alert=True)
             return
@@ -274,7 +282,8 @@ async def withdraw(callback: CallbackQuery) -> None:
         amount = customer.balance_rub
         customer.balance_rub = 0
         req = WithdrawalRequest(
-            customer_id=customer.id, amount=amount,
+            customer_id=customer.id,
+            amount=amount,
             requisites=f"{METHODS.get(customer.withdrawal_method, '')}: {customer.withdrawal_requisites}",
         )
         s.add(req)
@@ -294,15 +303,18 @@ async def withdraw(callback: CallbackQuery) -> None:
                 f"От: @{callback.from_user.username} ({callback.from_user.id})\n"
                 f"Сумма: <b>{amount} ₽</b>\n"
                 f"Реквизиты: <code>{requisites}</code>",
-                reply_markup=b.as_markup(), parse_mode="HTML",
+                reply_markup=b.as_markup(),
+                parse_mode="HTML",
             )
         except Exception:
             pass
-    b = InlineKeyboardBuilder().row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
-    await _show(
-        callback,
+    b = InlineKeyboardBuilder().row(
+        InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home")
+    )
+    await callback.message.edit_text(
         f"✅ <b>Заявка на {amount} ₽ отправлена!</b>\n\nОбычно выплата в течение 24 часов.",
-        b.as_markup(),
+        reply_markup=b.as_markup(),
+        parse_mode="HTML",
     )
 
 

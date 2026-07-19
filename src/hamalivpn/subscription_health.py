@@ -158,7 +158,9 @@ async def probe_subscription_url(
             response_ms=response_ms,
         )
 
-    udp_endpoint_count = sum(1 for endpoint in endpoints if endpoint.scheme in {"hysteria2", "hy2", "tuic"})
+    udp_endpoint_count = sum(
+        1 for endpoint in endpoints if endpoint.scheme in {"hysteria2", "hy2", "tuic"}
+    )
     tcp_endpoints = {
         (endpoint.host, endpoint.port)
         for endpoint in endpoints

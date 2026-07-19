@@ -96,7 +96,9 @@ async def test_probe_sends_extra_headers(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.mark.asyncio
-async def test_probe_marks_partial_tcp_reachability_as_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_probe_marks_partial_tcp_reachability_as_degraded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     body = encoded_subscription(
         "vless://uuid@fast.example:443?type=tcp#Fast",
         "vless://uuid@dead.example:2053?type=tcp#Dead",

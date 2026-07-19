@@ -1,10 +1,19 @@
 import secrets
 from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import Settings
-from .models import AuditLog, Customer, Subscription, SubscriptionDevice, SubscriptionStatus, as_utc, utcnow
+from .models import (
+    AuditLog,
+    Customer,
+    Subscription,
+    SubscriptionDevice,
+    SubscriptionStatus,
+    as_utc,
+    utcnow,
+)
 from .public_urls import public_subscription_base_urls
 from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 
@@ -54,11 +63,15 @@ def _device_username(subscription: Subscription, slot_id: int | None = None) -> 
     return f"dev_{subscription.id[:8]}_{slot_part}{suffix}"[:64]
 
 
-async def _subscription_customer(session: AsyncSession, subscription: Subscription) -> Customer | None:
+async def _subscription_customer(
+    session: AsyncSession, subscription: Subscription
+) -> Customer | None:
     return await session.get(Customer, subscription.customer_id)
 
 
-def device_subscription_url(settings: Settings, subscription: Subscription, slot: SubscriptionDevice) -> str:
+def device_subscription_url(
+    settings: Settings, subscription: Subscription, slot: SubscriptionDevice
+) -> str:
     """Public subscription URL for a device slot.
 
     The Remnawave user behind the slot has its own shortUuid, but we expose the
@@ -75,10 +88,7 @@ def device_subscription_urls(
     subscription: Subscription,
     slot: SubscriptionDevice,
 ) -> tuple[str, ...]:
-    return tuple(
-        f"{base}/{slot.device_token}"
-        for base in public_subscription_base_urls(settings)
-    )
+    return tuple(f"{base}/{slot.device_token}" for base in public_subscription_base_urls(settings))
 
 
 async def get_device_slot_by_token(
@@ -88,7 +98,9 @@ async def get_device_slot_by_token(
     token = (token or "").strip()
     if not token:
         return None
-    return await session.scalar(select(SubscriptionDevice).where(SubscriptionDevice.device_token == token))
+    return await session.scalar(
+        select(SubscriptionDevice).where(SubscriptionDevice.device_token == token)
+    )
 
 
 async def active_device_slots(
@@ -222,7 +234,10 @@ async def ensure_device_slot(
     client_ip: str | None = None,
     user_agent: str | None = None,
 ) -> SubscriptionDevice:
-    if subscription.status != SubscriptionStatus.active or as_utc(subscription.expires_at) <= utcnow():
+    if (
+        subscription.status != SubscriptionStatus.active
+        or as_utc(subscription.expires_at) <= utcnow()
+    ):
         raise DeviceLimitReached("subscription_inactive")
 
     now = _now()

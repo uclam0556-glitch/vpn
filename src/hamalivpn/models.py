@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,7 +49,9 @@ class Customer(Base):
     balance_rub: Mapped[int] = mapped_column(Integer, default=0)
     role: Mapped[str] = mapped_column(String(32), default="client", server_default="client")
     reseller_level: Mapped[int] = mapped_column(default=1, server_default="1")
-    portal_access_key: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    portal_access_key: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
     withdrawal_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     withdrawal_requisites: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -62,9 +65,7 @@ class Customer(Base):
     referrer: Mapped["Customer"] = relationship(
         "Customer", remote_side="Customer.id", back_populates="referrals"
     )
-    referrals: Mapped[list["Customer"]] = relationship(
-        "Customer", back_populates="referrer"
-    )
+    referrals: Mapped[list["Customer"]] = relationship("Customer", back_populates="referrer")
 
 
 class Subscription(Base):
@@ -214,3 +215,38 @@ class Tariff(Base):
     device_limit: Mapped[int] = mapped_column(Integer, default=1)
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class IntegrationLink(Base):
+    __tablename__ = "integration_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[str] = mapped_column(Text)
+    hwid: Mapped[str] = mapped_column(String(64))
+    user_agent: Mapped[str] = mapped_column(String(255))
+    last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+    nodes: Mapped[list["IntegrationNode"]] = relationship(
+        back_populates="link", cascade="all, delete-orphan"
+    )
+
+
+class IntegrationNode(Base):
+    __tablename__ = "integration_nodes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    link_id: Mapped[int] = mapped_column(
+        ForeignKey("integration_links.id", ondelete="CASCADE"), index=True
+    )
+    raw_link: Mapped[str] = mapped_column(Text)
+    original_name: Mapped[str] = mapped_column(String(255))
+    display_name: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+    link: Mapped[IntegrationLink] = relationship(back_populates="nodes")

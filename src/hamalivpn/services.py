@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import Settings
 from .device_slots import deactivate_subscription_slots, sync_subscription_device_slots
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
-from .public_urls import public_connect_base_url, public_connect_base_urls
+from .public_urls import public_connect_base_url as public_connect_base_url
+from .public_urls import public_connect_base_urls
 from .remnawave import RemnawaveGateway, RemnawaveNotFoundError
 from .schemas import TrialResult
 from .subscription_health import SubscriptionProbeResult, probe_subscription_url
@@ -392,12 +393,16 @@ async def get_subscription_by_token(session: AsyncSession, token: str) -> Subscr
         return None
 
     matches = (
-        await session.execute(
-            select(Subscription)
-            .where(Subscription.access_token.startswith(token, autoescape=True))
-            .limit(2)
+        (
+            await session.execute(
+                select(Subscription)
+                .where(Subscription.access_token.startswith(token, autoescape=True))
+                .limit(2)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if len(matches) != 1:
         return None
     return matches[0]

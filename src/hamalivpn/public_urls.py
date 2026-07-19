@@ -2,7 +2,6 @@ from urllib.parse import urlparse
 
 from .config import Settings
 
-
 PRODUCTION_PUBLIC_BASE_URL = "https://portal.hamali.ru"
 PRODUCTION_SUBSCRIPTION_BASE_URL = "https://sub.hamali.ru"
 

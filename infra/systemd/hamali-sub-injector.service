@@ -1,0 +1,20 @@
+[Unit]
+Description=HamaliVPN subscription injector
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hamaliadmin
+Group=hamaliadmin
+WorkingDirectory=/opt/hamalivpn
+EnvironmentFile=/opt/hamalivpn/.env
+ExecStart=/opt/hamalivpn/webapp-venv/bin/python -m hamalivpn.sub_injector
+Restart=always
+RestartSec=2
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

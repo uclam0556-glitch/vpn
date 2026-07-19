@@ -1,0 +1,24 @@
+listen: :8443
+
+tls:
+  cert: /etc/hysteria/server.crt
+  key: /etc/hysteria/server.key
+
+obfs:
+  type: salamander
+  salamander:
+    password: REPLACE_WITH_NODE_OBFS_PASSWORD
+
+auth:
+  type: http
+  http:
+    # Keep authentication on the stable public API hostname. Never point a
+    # node at a retired control-server IP or expose the private API port.
+    url: https://app.hamali.ru/hysteria/auth
+    insecure: false
+
+masquerade:
+  type: proxy
+  proxy:
+    url: https://dzen.ru/
+    rewriteHost: true

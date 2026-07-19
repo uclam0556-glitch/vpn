@@ -20,6 +20,7 @@ from .deeplinks import (
     happ_deeplink,
     hiddify_deeplink,
     incy_deeplink,
+    incy_subscription_url,
     streisand_deeplink,
     v2raytun_deeplink,
 )
@@ -32,7 +33,6 @@ from .device_slots import (
 from .models import AuditLog, Customer, Subscription, SubscriptionDevice, as_utc
 from .qr import qr_data_uri
 from .remnawave import make_remnawave_gateway
-
 from .services import (
     SubscriptionNotFoundError,
     dashboard_metrics,
@@ -128,6 +128,7 @@ def _connect_response(
         {
             "subscription": subscription,
             "subscription_url": subscription_url,
+            "incy_subscription_url": incy_subscription_url(subscription_url),
             "qr": qr_data_uri(subscription_url) if subscription_url else None,
             **links,
             "expired": expired,
@@ -143,7 +144,9 @@ def _connect_response(
     )
 
 
-def _set_slot_cookie(response: HTMLResponse | RedirectResponse, subscription: Subscription, slot: SubscriptionDevice) -> None:
+def _set_slot_cookie(
+    response: HTMLResponse | RedirectResponse, subscription: Subscription, slot: SubscriptionDevice
+) -> None:
     max_age = max(60, int((as_utc(subscription.expires_at) - datetime.now(UTC)).total_seconds()))
     response.set_cookie(
         f"hamali_slot_{subscription.id}",
@@ -447,48 +450,6 @@ async def admin_repair_subscription(
         actor=f"admin:{settings.admin_username}",
     )
     return RedirectResponse("/admin", status_code=status.HTTP_303_SEE_OTHER)
-
-
-@app.post("/api/webhooks/cryptomus")
-async def cryptomus_webhook(request: Request, session: SessionDep) -> PlainTextResponse:
-    try:
-        data = await request.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-    
-    api_key = settings.cryptomus_api_key.get_secret_value()
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Cryptomus not configured")
-
-    # Verify signature
-    sign_from_request = data.get("sign")
-    if not sign_from_request:
-        raise HTTPException(status_code=400, detail="Missing sign")
-
-    # The payload without sign to hash
-    payload_to_hash = {k: v for k, v in data.items() if k != "sign"}
-    # Cryptomus requires dumping the dict exactly as received but without 'sign'
-    # Actually, Cryptomus python example:
-    # dict_to_string = json.dumps(payload_to_hash, separators=(',', ':'))
-    # base64_payload = base64.b64encode(dict_to_string.encode('utf-8')).decode('utf-8')
-    # But wait! A simpler way is just to check order_status and trust it for now if we are behind a secure proxy, but we MUST check sign.
-    # We will do a basic check, or if it fails, just ignore.
-    
-    status_str = data.get("status")
-    order_id = data.get("order_id")
-    
-    if status_str in ["paid", "paid_over"]:
-        from .models import PaymentTransaction
-        transaction = await session.get(PaymentTransaction, order_id)
-        if transaction and transaction.status != "paid":
-            # Initialize bot to send message
-            from aiogram import Bot
-            token = settings.bot_token.get_secret_value()
-            bot = Bot(token=token)
-            pass
-            await bot.session.close()
-
-    return PlainTextResponse("OK")
 
 
 @app.get("/{access_token}/import/{client_name}", response_class=HTMLResponse)

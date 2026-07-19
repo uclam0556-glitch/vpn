@@ -8,7 +8,6 @@ from typing import Any
 
 from .config import get_settings
 
-
 FALLBACKS: dict[str, str] = {
     "brand": "🛡",
     "wave": "👋",

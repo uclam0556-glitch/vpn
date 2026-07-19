@@ -35,11 +35,7 @@ def _device_created_key(device: dict[str, Any]) -> tuple[datetime, datetime]:
 
 def _device_hwid(device: dict[str, Any]) -> str:
     return str(
-        device.get("hwid")
-        or device.get("HWID")
-        or device.get("deviceId")
-        or device.get("id")
-        or ""
+        device.get("hwid") or device.get("HWID") or device.get("deviceId") or device.get("id") or ""
     )
 
 

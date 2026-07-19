@@ -82,8 +82,7 @@ class PlategaPaymentError(RuntimeError):
 
 def _platega_is_configured() -> bool:
     return bool(
-        settings.platega_merchant_id.strip()
-        and settings.platega_api_key.get_secret_value().strip()
+        settings.platega_merchant_id.strip() and settings.platega_api_key.get_secret_value().strip()
     )
 
 
@@ -125,9 +124,7 @@ async def create_platega_link(
         raise PlategaPaymentError(f"Platega request failed: {exc}") from exc
 
     if response.is_error:
-        raise PlategaPaymentError(
-            f"Platega returned {response.status_code}: {response.text[:500]}"
-        )
+        raise PlategaPaymentError(f"Platega returned {response.status_code}: {response.text[:500]}")
     data = response.json()
     transaction_id = data.get("transactionId") or data.get("id")
     payment_url = data.get("url") or data.get("redirect")
@@ -153,10 +150,14 @@ async def process_platega_buy(callback: CallbackQuery) -> None:
 
     async with SessionFactory() as session:
         customer = (
-            await session.execute(
-                select(Customer).where(Customer.telegram_id == callback.from_user.id)
+            (
+                await session.execute(
+                    select(Customer).where(Customer.telegram_id == callback.from_user.id)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if not customer:
             customer = Customer(
                 telegram_id=callback.from_user.id,
@@ -229,8 +230,10 @@ def freekassa_link(order_id: str, amount: int) -> str | None:
     if not merchant or not secret1:
         return None
     sign = hashlib.md5(f"{merchant}:{amount}:{secret1}:RUB:{order_id}".encode()).hexdigest()
-    return FK_PAY_URL + "?" + urlencode(
-        {"m": merchant, "oa": amount, "currency": "RUB", "o": order_id, "s": sign}
+    return (
+        FK_PAY_URL
+        + "?"
+        + urlencode({"m": merchant, "oa": amount, "currency": "RUB", "o": order_id, "s": sign})
     )
 
 
@@ -243,10 +246,14 @@ async def process_fk_buy(callback: CallbackQuery) -> None:
         return
     async with SessionFactory() as session:
         customer = (
-            await session.execute(
-                select(Customer).where(Customer.telegram_id == callback.from_user.id)
+            (
+                await session.execute(
+                    select(Customer).where(Customer.telegram_id == callback.from_user.id)
+                )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if not customer:
             customer = Customer(
                 telegram_id=callback.from_user.id,
@@ -352,7 +359,7 @@ async def successful_payment(message: Message) -> None:
                         referrer.telegram_id,
                         f"🎁 Ваш реферал оплатил подписку!\n"
                         f"Начислено <b>{bonus} ₽</b> на партнёрский баланс.",
-                        parse_mode="HTML"
+                        parse_mode="HTML",
                     )
                 except Exception:
                     pass
@@ -385,9 +392,7 @@ async def successful_payment(message: Message) -> None:
             else:
                 # Top up an existing subscription: extend from the later of "now"
                 # and the current expiry so active time is never lost.
-                current_expiry = (
-                    as_utc(subscription.expires_at) if subscription.expires_at else now
-                )
+                current_expiry = as_utc(subscription.expires_at) if subscription.expires_at else now
                 base = max(current_expiry, now)
             new_expires = base + timedelta(days=plan["days"])
 

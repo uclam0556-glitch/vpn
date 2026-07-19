@@ -47,9 +47,6 @@ http_up "http://127.0.0.1:8001/health" || problems+="• portal API (8001) не 
 # Canonical systemd units.
 systemctl is-active --quiet hamali-sub-injector.service \
   || problems+="• hamali-sub-injector.service не активен"$'\n'
-systemctl is-active --quiet hamalivpn-api.service \
-  || problems+="• hamalivpn-api.service не активен"$'\n'
-
 # Required containers. Respect their restart policies; the monitor does not create restart loops.
 containers=(
   hamalivpn-control-1 hamalivpn-bot-1 hamalivpn-maintenance-1
@@ -70,6 +67,7 @@ done
 
 # Exit nodes used in production. London is intentionally removed from checks.
 nodes=(
+  "Франция новая|107.161.160.220|443"
   "Финляндия|62.60.249.228|443"
   "Нидерланды|103.112.69.188|443"
   "Франция|45.92.218.178|443"

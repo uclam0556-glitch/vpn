@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>HamaliVPN Premium</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/tma/styles.css">
+</head>
+<body>
+    <!-- Animated Background -->
+    <div class="mesh-bg">
+        <div class="mesh-blob blob-1"></div>
+        <div class="mesh-blob blob-2"></div>
+        <div class="mesh-blob blob-3"></div>
+    </div>
+
+    <div id="app">
+        <main id="content">
+            <!-- Home View -->
+            <section id="view-home" class="view active">
+                <h2 class="view-title">HamaliVPN</h2>
+
+                <div class="glass-card">
+                    <div class="status-header">
+                        <div class="status-badge skeleton" id="status-badge">
+                            <i id="status-dot"></i> <span id="status-text">Загрузка</span>
+                        </div>
+                        <div class="skeleton" id="days-left-badge" style="font-size: 0.85rem; font-weight: 600;">-- дней</div>
+                    </div>
+
+                    <!-- Circular Progress for Traffic -->
+                    <div class="progress-ring-container">
+                        <svg class="progress-ring">
+                            <circle class="progress-ring__circle_bg" cx="70" cy="70" r="60"></circle>
+                            <circle class="progress-ring__circle" id="traffic-ring" cx="70" cy="70" r="60" stroke-dasharray="377" stroke-dashoffset="377"></circle>
+                        </svg>
+                        <div class="progress-content">
+                            <span class="progress-value skeleton" id="traffic-value">0</span>
+                            <span class="progress-label skeleton" id="traffic-label">ГБ Использовано</span>
+                        </div>
+                    </div>
+
+                    <div class="status-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Лимит трафика</span>
+                            <span class="detail-value skeleton" id="traffic-limit">--</span>
+                        </div>
+                        <div class="detail-item" style="text-align: right;">
+                            <span class="detail-label">Устройства</span>
+                            <span class="detail-value skeleton" id="devices-count">-- / --</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="btn-connect-container" id="connect-container">
+                    <button class="btn-connect skeleton" id="btn-smart-connect">
+                        🚀 Подключить в 1 клик
+                    </button>
+                    <button class="btn btn-connect secondary" id="btn-renew" style="display: none;">
+                        ⭐️ Продлить подписку
+                    </button>
+                </div>
+            </section>
+
+            <!-- Devices View -->
+            <section id="view-devices" class="view">
+                <h2 class="view-title">Устройства</h2>
+                <div id="devices-list" class="devices-list">
+                    <!-- Skeletons initially -->
+                    <div class="device-item skeleton" style="height: 80px;"></div>
+                    <div class="device-item skeleton" style="height: 80px;"></div>
+                </div>
+            </section>
+
+            <!-- Referrals View -->
+            <section id="view-referrals" class="view">
+                <h2 class="view-title">Партнёрская сеть</h2>
+
+                <div class="glass-card balance-card">
+                    <h3>Ваш баланс</h3>
+                    <div class="balance-amount skeleton" id="ref-balance">0 ₽</div>
+
+                    <div class="ref-level-container">
+                        <div class="ref-level-header">
+                            <span class="skeleton" id="ref-level-text">Уровень 1</span>
+                            <span class="skeleton" id="ref-next-text">Осталось 0 приглашений</span>
+                        </div>
+                        <div class="ref-progress-bar skeleton" id="ref-bar-container">
+                            <div class="ref-progress-fill" id="ref-progress-fill"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="glass-card">
+                    <h3>Ваша ссылка</h3>
+                    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 12px;">Приглашайте друзей и получайте % с их оплат навсегда.</p>
+                    <div class="copy-box skeleton" id="ref-link-box">
+                        <span id="ref-link-text">Генерация...</span>
+                        <button class="btn-icon" id="btn-copy-ref">📋</button>
+                    </div>
+                    <button class="btn btn-share skeleton" id="btn-share-tg">
+                        ✈️ Отправить в Telegram
+                    </button>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-item skeleton" id="stat-1">
+                        <span class="stat-value" id="ref-count">0</span>
+                        <span class="stat-label">Приглашено</span>
+                    </div>
+                    <div class="stat-item skeleton" id="stat-2">
+                        <span class="stat-value" id="ref-earned">0 ₽</span>
+                        <span class="stat-label">Заработано</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav glass-nav">
+            <button class="nav-btn active" data-target="home">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-text">Главная</span>
+            </button>
+            <button class="nav-btn" data-target="devices">
+                <span class="nav-icon">📱</span>
+                <span class="nav-text">Устройства</span>
+            </button>
+            <button class="nav-btn" data-target="referrals">
+                <span class="nav-icon">💎</span>
+                <span class="nav-text">Заработок</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal-overlay" class="modal-overlay">
+        <div class="modal glass-card">
+            <h3 id="modal-title">Сообщение</h3>
+            <p id="modal-text"></p>
+            <button class="btn btn-primary" id="btn-modal-close">Ок</button>
+        </div>
+    </div>
+
+    <script src="/tma/app.js"></script>
+</body>
+</html>

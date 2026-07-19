@@ -430,6 +430,18 @@ summary::-webkit-details-marker { display: none; }
       </div>
     </a>
 
+    {% if incy_link %}
+    <a class="happ-btn cv2-import-action" href="{{ incy_link }}" style="background: linear-gradient(135deg, #3158d4, #7347d8); margin-top: 12px;">
+      <div class="happ-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      </div>
+      <div class="happ-info">
+        <b>Подключить в Incy</b>
+        <small>Отдельный профиль с VLESS и Hysteria2</small>
+      </div>
+    </a>
+    {% endif %}
+
     <details>
       <summary>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
@@ -445,6 +457,11 @@ summary::-webkit-details-marker { display: none; }
         <div class="copy-row">
           <input id="sub-url" class="copy-input" readonly value="{{ subscription_url }}">
           <button class="btn-secondary cv2-copy-btn" data-copy="#sub-url">Копировать</button>
+        </div>
+        <p style="font-size:13px; color:var(--text-secondary); margin:16px 0 8px;">Отдельная ссылка для Incy</p>
+        <div class="copy-row">
+          <input id="incy-sub-url" class="copy-input" readonly value="{{ incy_subscription_url }}">
+          <button class="btn-secondary cv2-copy-btn" data-copy="#incy-sub-url">Копировать</button>
         </div>
         {% else %}
         <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">

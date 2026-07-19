@@ -5,8 +5,8 @@
 bot/.env
 
 # Локальные файлы с хардкодом секретов (пароль Hysteria, пины) — НЕ в публичный репо
-sub_injector_new.py
-sub_injector.py
+/sub_injector_new.py
+/sub_injector.py
 server_api.py
 config*.yaml
 src/hamalivpn/api_remote.py
@@ -25,6 +25,14 @@ Thumbs.db
 *.log
 logs/
 data/
+.env.backup.*
+.monitor_state
+backups/
+db_backups/
+webapp-venv/
+_disabled/
+alembic_current.txt
+alembic_history.txt
 .venv/
 __pycache__/
 .pytest_cache/

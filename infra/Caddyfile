@@ -1,6 +1,13 @@
 {$PUBLIC_HOST} {
 	encode zstd gzip
-	reverse_proxy control:8080
+
+	handle /api/internal/* {
+		respond "Not found" 404
+	}
+
+	handle {
+		reverse_proxy api:8001
+	}
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
@@ -39,6 +46,10 @@
 {$CABINET_HOST}, {$CABINET_FALLBACK_HOST}, portal.hamali.ru {
 	encode zstd gzip
 
+	handle /api/internal/* {
+		respond "Not found" 404
+	}
+
 	# Keep subscription imports on the same Cloudflare-proxied public host as
 	# the activation page. This avoids exposing the panel/origin route to users.
 	handle /api/sub/* {
@@ -46,7 +57,7 @@
 	}
 
 	handle {
-		reverse_proxy 172.17.0.1:8001
+		reverse_proxy api:8001
 	}
 
 	@portal_dynamic {
@@ -73,7 +84,7 @@
 }
 
 # Direct subscription endpoint: no portal frontend, JavaScript or auth page.
-{$SUBSCRIPTION_HOST} {
+{$SUBSCRIPTION_HOST}, sub.hamali.ru {
 	encode zstd gzip
 	reverse_proxy 172.17.0.1:8000
 
@@ -92,7 +103,7 @@ de.hamali.ru {
 }
 
 http://app.hamali.ru {
-	reverse_proxy 172.17.0.1:8001
+	reverse_proxy api:8001
 }
 
 http://portal.hamali.ru {

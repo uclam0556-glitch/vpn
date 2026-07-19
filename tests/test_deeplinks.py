@@ -1,7 +1,10 @@
+import json
+
 from hamalivpn.deeplinks import (
     happ_deeplink,
     hiddify_deeplink,
     incy_deeplink,
+    incy_subscription_url,
     streisand_deeplink,
     v2raytun_deeplink,
 )
@@ -64,9 +67,20 @@ def test_incy_deeplink_uses_official_crypt_scheme(monkeypatch) -> None:
     assert link == "incy://crypt1/encrypted-payload"
     assert calls["node_name"] == "node"
     assert calls["cmd"][0] == "/usr/bin/node"
+    payload = json.loads(calls["cmd"][-1])
+    assert payload["url"] == "https://sub.example.com/a?client=incy"
     assert calls["kwargs"]["timeout"] == 2
 
 
 def test_incy_deeplink_hides_button_when_encoder_is_unavailable(monkeypatch) -> None:
     monkeypatch.setattr("hamalivpn.deeplinks.shutil.which", lambda _name: None)
     assert incy_deeplink("https://sub.example.com/a") == ""
+
+
+def test_incy_subscription_url_preserves_and_replaces_query() -> None:
+    assert incy_subscription_url("https://sub.example.com/a?slot=1") == (
+        "https://sub.example.com/a?slot=1&client=incy"
+    )
+    assert incy_subscription_url("https://sub.example.com/a?client=old&slot=1") == (
+        "https://sub.example.com/a?slot=1&client=incy"
+    )

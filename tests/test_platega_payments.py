@@ -1,6 +1,5 @@
-from pydantic import SecretStr
-
 import pytest
+from pydantic import SecretStr
 
 import hamalivpn.payments as payments
 from hamalivpn.api import FK_PLAN_DAYS, FK_PLAN_DEVICES

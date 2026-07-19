@@ -211,7 +211,7 @@ function renderFatal(error = "") {
 // ── shell ────────────────────────────────────────────────────────────────
 function tabsFor(role) {
   if (role === "super_admin") {
-    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["tariffs", "Тарифы"], ["allkeys", "Ключи"], ["audit", "Аудит"]];
+    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["tariffs", "Тарифы"], ["referrals", "Рефералы"], ["allkeys", "Ключи"], ["audit", "Аудит"]];
   }
   return [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
 }
@@ -247,10 +247,31 @@ async function renderTab() {
   const view = document.getElementById("view");
   const map = {
     dashboard: viewDashboard, buy: viewBuy, clients: viewClients, resellers: viewResellers,
-    admin: viewAdminDashboard, tariffs: viewTariffs, allkeys: viewAllKeys, audit: viewAudit,
+    admin: viewAdminDashboard, tariffs: viewTariffs, referrals: viewAdminReferrals, allkeys: viewAllKeys, audit: viewAudit,
   };
   try { await (map[state.tab] || (() => {}))(view); }
   catch (err) { if (err.message !== "unauthorized") view.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+}
+
+async function viewAdminReferrals(view) {
+  const d = await api("/admin/referrals");
+  view.innerHTML = `
+    <div class="section-title"><h2>Рефералы и статистика</h2></div>
+    <div class="card" style="overflow-x:auto">
+      <table class="table">
+        <thead><tr><th>ID</th><th>Имя / TG</th><th>Баланс</th><th>Рефералов</th></tr></thead>
+        <tbody>
+          ${d.length ? d.map(r => `
+            <tr>
+              <td>${r.id} <div class="hint">${r.telegram_id}</div></td>
+              <td>${esc(r.full_name || "")} ${r.username ? `<br><span class="pill">@${esc(r.username)}</span>` : ""}</td>
+              <td>${rub(r.balance_rub)}</td>
+              <td>${r.referrals_count} чел.</td>
+            </tr>
+          `).join("") : `<tr><td colspan="4" class="empty" style="text-align:center;padding:20px">Нет активных рефералов</td></tr>`}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // ── dashboard ──────────────────────────────────────────────────────────────

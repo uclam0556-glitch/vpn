@@ -11,7 +11,11 @@ from .device_limits import prune_hwid_devices_to_limit
 from .models import AuditLog, Customer, Subscription, SubscriptionStatus, as_utc
 from .premium_emoji import ce
 from .remnawave import RemnawaveError, make_remnawave_gateway
-from .services import check_due_subscription_health, expire_due_subscriptions, subscription_connect_url
+from .services import (
+    check_due_subscription_health,
+    expire_due_subscriptions,
+    subscription_connect_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,18 +178,22 @@ async def enforce_hwid_device_limits(session, gateway) -> int:
     _last_hwid_enforce_at = now
 
     rows = (
-        await session.execute(
-            select(Subscription)
-            .where(
-                Subscription.status == SubscriptionStatus.active,
-                Subscription.expires_at > now,
-                Subscription.remnawave_uuid.is_not(None),
-                Subscription.device_limit >= 1,
+        (
+            await session.execute(
+                select(Subscription)
+                .where(
+                    Subscription.status == SubscriptionStatus.active,
+                    Subscription.expires_at > now,
+                    Subscription.remnawave_uuid.is_not(None),
+                    Subscription.device_limit >= 1,
+                )
+                .order_by(Subscription.updated_at.desc())
+                .limit(_HWID_ENFORCE_BATCH_SIZE)
             )
-            .order_by(Subscription.updated_at.desc())
-            .limit(_HWID_ENFORCE_BATCH_SIZE)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     pruned = 0
     for subscription in rows:
