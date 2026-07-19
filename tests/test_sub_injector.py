@@ -4,6 +4,7 @@ import urllib.parse
 
 from hamalivpn.sub_injector import (
     CLUSTER_REMARKS,
+    INCY_PROFILE_HEADERS,
     STANDALONE_CLUSTER_TAGS,
     extract_subscription_token,
     incy_compatible_link,
@@ -14,6 +15,7 @@ from hamalivpn.sub_injector import (
     is_incy_request,
     reality_share_link,
     remnawave_subscription_path,
+    requested_cluster,
 )
 
 
@@ -214,6 +216,22 @@ def test_incy_request_is_detected_by_query_and_official_headers() -> None:
     Handler.path = "/token"
     Handler.headers = {"User-Agent": "INCY/1.2/iOS", "x-client": "INCY"}
     assert is_incy_request(Handler())
+
+
+def test_incy_uses_one_full_config_subscription_and_happ_stays_full_config() -> None:
+    class Handler:
+        path = "/token?client=incy"
+        headers = {"User-Agent": "INCY/2.3.1/iOS", "x-client": "INCY"}
+
+    assert requested_cluster(Handler()) == "all"
+
+    Handler.path = "/token?client=incy-integrated"
+    assert requested_cluster(Handler()) is None
+
+    Handler.path = "/token"
+    Handler.headers = {"User-Agent": "Happ/3.0"}
+    assert requested_cluster(Handler()) == "all"
+    assert INCY_PROFILE_HEADERS["no-limit-enabled"] == "1"
 
 
 def test_generated_germany_link_is_valid_reality_vless() -> None:

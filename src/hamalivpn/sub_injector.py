@@ -23,7 +23,13 @@ CLUSTER_REMARKS = {
     "uk": "🇬🇧 Юнайтед Кингдом",
     "fi": "🇫🇮 Финляндия",
 }
-INCY_PROFILE_HEADERS = {"sort-order": "ping"}
+INCY_PROFILE_HEADERS = {
+    "sort-order": "ping",
+    # XHTTP/full-config profiles can exceed the iOS Network Extension memory
+    # budget. INCY documents this opt-in mode specifically to keep the tunnel
+    # below the 50 MB cap instead of being killed immediately after connect.
+    "no-limit-enabled": "1",
+}
 
 
 def b64_text(text):
@@ -89,6 +95,20 @@ def is_incy_request(handler):
     return client in {"incy", "incy-integrated"} or client_header == "incy" or user_agent.startswith(
         "incy/"
     )
+
+
+def requested_cluster(handler):
+    """Select full-config output for Happ and the single INCY subscription."""
+
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query)
+    cluster = query.get("cluster", [""])[-1].strip().lower()
+    if cluster:
+        return cluster
+    if is_incy_request(handler) and not is_incy_integrated_request(handler):
+        return "all"
+    if "happ" in handler.headers.get("User-Agent", "").lower():
+        return "all"
+    return None
 
 
 def incy_compatible_link(link):
@@ -542,17 +562,14 @@ def vless_to_outbound(vless_url):
         if parsed.scheme != "vless":
             return None
 
-        user_info = parsed.netloc.split("@")
-        if len(user_info) != 2:
+        uuid_val = urllib.parse.unquote(parsed.username or "")
+        address = parsed.hostname or ""
+        port = parsed.port
+        if not uuid_val or not address or port is None:
             return None
 
-        uuid_val = user_info[0]
-        host_port = user_info[1].split(":")
-        address = host_port[0]
-        port = int(host_port[1])
-
         query = urllib.parse.parse_qs(parsed.query)
-        tag = urllib.parse.unquote(parsed.fragment) if parsed.fragment else "Integrated Node"
+        tag = urllib.parse.unquote(parsed.fragment).split("?", 1)[0] if parsed.fragment else "Integrated Node"
 
         network = query.get("type", ["tcp"])[0]
         security = query.get("security", ["none"])[0]
@@ -582,9 +599,11 @@ def vless_to_outbound(vless_url):
                 "spiderX": query.get("spx", [""])[0],
             }
         elif security == "tls":
+            alpn = query.get("alpn", [""])[0]
             outbound["streamSettings"]["tlsSettings"] = {
                 "serverName": query.get("sni", [""])[0],
                 "fingerprint": query.get("fp", ["chrome"])[0],
+                "alpn": [item for item in alpn.split(",") if item],
             }
 
         if network == "grpc":
@@ -597,9 +616,49 @@ def vless_to_outbound(vless_url):
                 "path": query.get("path", ["/"])[0],
                 "headers": {"Host": query.get("host", [query.get("sni", [""])[0]])[0]},
             }
+        elif network in {"xhttp", "splithttp"}:
+            outbound["streamSettings"]["network"] = "xhttp"
+            extra = query.get("extra", [""])[0]
+            try:
+                parsed_extra = json.loads(extra) if extra else None
+            except json.JSONDecodeError:
+                parsed_extra = None
+            xhttp = {
+                "path": query.get("path", ["/"])[0],
+                "host": query.get("host", [""])[0],
+                "mode": query.get("mode", ["auto"])[0],
+            }
+            if parsed_extra is not None:
+                xhttp["extra"] = parsed_extra
+            if query.get("sit", [""])[0].isdigit():
+                xhttp["xhttpSessionIDTable"] = int(query["sit"][0])
+            if query.get("sil", [""])[0].isdigit():
+                xhttp["xhttpSessionIDLength"] = int(query["sil"][0])
+            outbound["streamSettings"]["xhttpSettings"] = xhttp
 
         return {
             "remarks": tag,
+            "log": {"loglevel": "warning"},
+            "inbounds": [
+                {
+                    "tag": "socks",
+                    "listen": "127.0.0.1",
+                    "port": 10808,
+                    "protocol": "socks",
+                    "settings": {"udp": True},
+                    "sniffing": {
+                        "enabled": True,
+                        "destOverride": ["http", "tls", "quic"],
+                        "routeOnly": True,
+                    },
+                },
+                {
+                    "tag": "http",
+                    "listen": "127.0.0.1",
+                    "port": 10809,
+                    "protocol": "http",
+                },
+            ],
             "outbounds": [
                 outbound,
                 {"protocol": "freedom", "tag": "direct"},
@@ -1309,16 +1368,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 }
                                 return cfg
 
-                            _ctag = (
-                                self.path.split("cluster=", 1)[1].split("&")[0].split("#")[0]
-                                if "cluster=" in self.path
-                                else None
-                            )
-                            if (
-                                _ctag is None
-                                and "happ" in self.headers.get("User-Agent", "").lower()
-                            ):
-                                _ctag = "all"
+                            _ctag = requested_cluster(self)
                             if _ctag in (
                                 "1",
                                 "true",
