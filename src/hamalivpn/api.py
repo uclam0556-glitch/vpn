@@ -2356,7 +2356,19 @@ async def internal_integrated_nodes(db: AsyncSession = Depends(get_session)):
 
     result = await db.execute(select(IntegrationNode).filter(IntegrationNode.is_active.is_(True)))
     nodes = result.scalars().all()
-    return {"nodes": [node.raw_link for node in nodes]}
+    return {
+        # Keep the original field byte-compatible for Happ and older injectors.
+        "nodes": [node.raw_link for node in nodes],
+        # Incy uses the metadata only to preserve names selected through /nodes.
+        "items": [
+            {
+                "raw_link": node.raw_link,
+                "display_name": node.display_name,
+                "original_name": node.original_name,
+            }
+            for node in nodes
+        ],
+    }
 
 
 @app.get("/connect/{access_token}", response_class=HTMLResponse)

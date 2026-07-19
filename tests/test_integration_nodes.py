@@ -118,4 +118,13 @@ async def test_internal_nodes_endpoint_returns_only_active_nodes(session_factory
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == {"nodes": ["vless://active@example.com:443#Active"]}
+    assert response.json() == {
+        "nodes": ["vless://active@example.com:443#Active"],
+        "items": [
+            {
+                "raw_link": "vless://active@example.com:443#Active",
+                "display_name": "Active",
+                "original_name": "Active",
+            }
+        ],
+    }

@@ -114,6 +114,179 @@ def incy_compatible_links(links):
     return [incy_compatible_link(link) for link in links]
 
 
+def _first_config_value(value, default=""):
+    if isinstance(value, list):
+        return value[0] if value else default
+    return value if value not in (None, "") else default
+
+
+def _xray_vless_share_links(config, profile_name="Integrated"):
+    """Flatten VLESS outbounds from an Xray JSON config into share links."""
+
+    if not isinstance(config, dict):
+        return []
+
+    configured_outbounds = config.get("outbounds")
+    outbounds = configured_outbounds if isinstance(configured_outbounds, list) else [config]
+    vless_outbounds = [
+        outbound
+        for outbound in outbounds
+        if isinstance(outbound, dict) and outbound.get("protocol") == "vless"
+    ]
+    links = []
+
+    for outbound in vless_outbounds:
+        settings = outbound.get("settings") or {}
+        servers = settings.get("vnext") or []
+        stream = outbound.get("streamSettings") or {}
+        network = str(stream.get("network") or "tcp")
+        security = str(stream.get("security") or "none")
+
+        for server in servers:
+            if not isinstance(server, dict):
+                continue
+            address = str(server.get("address") or "").strip()
+            port = server.get("port")
+            users = server.get("users") or []
+            if not address or not port:
+                continue
+
+            for user in users:
+                if not isinstance(user, dict):
+                    continue
+                uuid_value = str(user.get("id") or "").strip()
+                if not uuid_value:
+                    continue
+
+                params = {
+                    "type": network,
+                    "security": security,
+                    "encryption": str(user.get("encryption") or "none"),
+                }
+                if flow := user.get("flow"):
+                    params["flow"] = str(flow)
+
+                if security == "reality":
+                    reality = stream.get("realitySettings") or {}
+                    params.update(
+                        {
+                            "pbk": str(reality.get("publicKey") or ""),
+                            "sni": str(_first_config_value(reality.get("serverName"))),
+                            "fp": str(reality.get("fingerprint") or "chrome"),
+                            "sid": str(_first_config_value(reality.get("shortId"))),
+                            "spx": str(reality.get("spiderX") or ""),
+                        }
+                    )
+                elif security == "tls":
+                    tls = stream.get("tlsSettings") or {}
+                    alpn = tls.get("alpn")
+                    params.update(
+                        {
+                            "sni": str(_first_config_value(tls.get("serverName"))),
+                            "fp": str(tls.get("fingerprint") or "chrome"),
+                            "alpn": ",".join(str(item) for item in alpn)
+                            if isinstance(alpn, list)
+                            else str(alpn or ""),
+                        }
+                    )
+                    if tls.get("allowInsecure") is True:
+                        params["insecure"] = "1"
+
+                if network == "ws":
+                    transport = stream.get("wsSettings") or {}
+                    params["path"] = str(transport.get("path") or "/")
+                    headers = transport.get("headers") or {}
+                    if host := headers.get("Host") or headers.get("host"):
+                        params["host"] = str(host)
+                elif network == "grpc":
+                    transport = stream.get("grpcSettings") or {}
+                    params["serviceName"] = str(transport.get("serviceName") or "")
+                    if transport.get("multiMode") is True:
+                        params["mode"] = "multi"
+                elif network in {"xhttp", "splithttp"}:
+                    transport = stream.get("xhttpSettings") or stream.get("splithttpSettings") or {}
+                    params["path"] = str(transport.get("path") or "/")
+                    params["host"] = str(transport.get("host") or "")
+                    params["mode"] = str(transport.get("mode") or "")
+                elif network in {"http", "h2"}:
+                    transport = stream.get("httpSettings") or {}
+                    params["path"] = str(transport.get("path") or "/")
+                    params["host"] = str(_first_config_value(transport.get("host")))
+                elif network == "tcp":
+                    tcp = stream.get("tcpSettings") or {}
+                    header = tcp.get("header") or {}
+                    if header_type := header.get("type"):
+                        params["headerType"] = str(header_type)
+
+                outbound_tag = str(outbound.get("tag") or "").strip()
+                config_name = str(config.get("remarks") or "").strip()
+                title_parts = [str(profile_name or config_name or "Integrated").strip()]
+                if config_name and config_name not in title_parts:
+                    title_parts.append(config_name)
+                if len(vless_outbounds) > 1 and outbound_tag and outbound_tag not in title_parts:
+                    title_parts.append(outbound_tag)
+                title = " · ".join(part for part in title_parts if part)[:200]
+                label = happ_label(title, "Integrated | VLESS | JSON")
+                query = urllib.parse.urlencode(
+                    {key: value for key, value in params.items() if value not in (None, "")}
+                )
+                host = f"[{address}]" if ":" in address and not address.startswith("[") else address
+                links.append(f"vless://{uuid_value}@{host}:{port}?{query}#{label}")
+
+    return links
+
+
+def _share_link_connection_key(link):
+    try:
+        parsed = urllib.parse.urlsplit(link)
+        if not parsed.scheme or not parsed.netloc:
+            return link.split("#", 1)[0]
+        query = urllib.parse.urlencode(sorted(urllib.parse.parse_qsl(parsed.query)))
+        return urllib.parse.urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc, parsed.path, query, "")
+        )
+    except ValueError:
+        return link.split("#", 1)[0]
+
+
+def incy_integrated_links(items):
+    """Return native share links for integrated nodes without mutating their source data."""
+
+    converted = []
+    for item in items or []:
+        if isinstance(item, dict):
+            raw_link = str(item.get("raw_link") or "").strip()
+            profile_name = str(
+                item.get("display_name") or item.get("original_name") or "Integrated"
+            ).strip()
+        else:
+            raw_link = str(item or "").strip()
+            profile_name = "Integrated"
+        if not raw_link:
+            continue
+
+        if raw_link.startswith(("{", "[")):
+            try:
+                document = json.loads(raw_link)
+            except json.JSONDecodeError:
+                continue
+            configs = document if isinstance(document, list) else [document]
+            for config in configs:
+                converted.extend(_xray_vless_share_links(config, profile_name))
+        elif "://" in raw_link:
+            converted.append(incy_compatible_link(raw_link))
+
+    result = []
+    seen = set()
+    for link in converted:
+        key = _share_link_connection_key(link)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(link)
+    return result
+
+
 def incy_whitelist_routing_link():
     """INCY routing equivalent of Happ's selectable «Белые списки» config."""
 
@@ -1238,6 +1411,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     )
 
                                 integrated_links = []
+                                integrated_items = []
                                 try:
                                     req_int = urllib.request.Request(
                                         "http://127.0.0.1:8001/api/internal/integrated_nodes",
@@ -1246,8 +1420,14 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     with urllib.request.urlopen(req_int, timeout=5) as int_res:
                                         int_data = json.loads(int_res.read().decode("utf-8"))
                                         integrated_links = int_data.get("nodes", [])
+                                        integrated_items = int_data.get("items") or [
+                                            {"raw_link": link} for link in integrated_links
+                                        ]
                                 except Exception as e:
                                     print("Error fetching integrated nodes:", e)
+
+                                if is_incy_request(self):
+                                    integrated_links = incy_integrated_links(integrated_items)
 
                                 all_links = (
                                     smart_links

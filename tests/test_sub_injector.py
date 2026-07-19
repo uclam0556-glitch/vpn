@@ -6,6 +6,7 @@ from hamalivpn.sub_injector import (
     STANDALONE_CLUSTER_TAGS,
     extract_subscription_token,
     incy_compatible_link,
+    incy_integrated_links,
     incy_whitelist_routing_link,
     is_incy_request,
     reality_share_link,
@@ -49,6 +50,75 @@ def test_incy_hysteria_link_uses_canonical_scheme_and_bandwidth() -> None:
 def test_incy_link_normalization_leaves_other_protocols_unchanged() -> None:
     link = "vless://uuid@example.com:443?security=reality#Node"
     assert incy_compatible_link(link) == link
+
+
+def test_incy_flattens_integrated_xray_json_without_mutating_source() -> None:
+    config = {
+        "remarks": "Provider profile",
+        "outbounds": [
+            {
+                "tag": "France",
+                "protocol": "vless",
+                "settings": {
+                    "vnext": [
+                        {
+                            "address": "vpn.example.com",
+                            "port": 443,
+                            "users": [
+                                {
+                                    "id": "00000000-0000-0000-0000-000000000001",
+                                    "encryption": "none",
+                                    "flow": "xtls-rprx-vision",
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "streamSettings": {
+                    "network": "tcp",
+                    "security": "reality",
+                    "realitySettings": {
+                        "publicKey": "public-key",
+                        "serverName": ["www.example.com"],
+                        "fingerprint": "firefox",
+                        "shortId": ["abcd"],
+                        "spiderX": "/",
+                    },
+                },
+            },
+            {"tag": "direct", "protocol": "freedom"},
+        ],
+    }
+    original = json.loads(json.dumps(config))
+
+    links = incy_integrated_links(
+        [{"raw_link": json.dumps(config), "display_name": "[Резерв] Франция"}]
+    )
+
+    assert len(links) == 1
+    assert links[0].startswith("vless://00000000-0000-0000-0000-000000000001@vpn.example.com:443?")
+    assert "security=reality" in links[0]
+    assert "pbk=public-key" in links[0]
+    assert "sni=www.example.com" in links[0]
+    assert "sid=abcd" in links[0]
+    assert (
+        "%5B%D0%A0%D0%B5%D0%B7%D0%B5%D1%80%D0%B2%5D%20%D0%A4%D1%80%D0%B0%D0%BD%D1%86%D0%B8%D1%8F"
+        in links[0]
+    )
+    assert config == original
+
+
+def test_incy_integrated_links_deduplicate_connections_and_normalize_hysteria() -> None:
+    first = "vless://uuid@example.com:443?security=reality&type=tcp#First"
+    duplicate = "vless://uuid@example.com:443?type=tcp&security=reality#Second"
+    hysteria = "hy2://secret@lte.example.com:443?sni=lte.example.com#LTE"
+
+    links = incy_integrated_links([first, duplicate, hysteria])
+
+    assert len(links) == 2
+    assert links[0] == first
+    assert links[1].startswith("hysteria2://")
+    assert "insecure=1" in links[1]
 
 
 def test_incy_request_is_detected_by_query_and_official_headers() -> None:
