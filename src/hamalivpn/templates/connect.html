@@ -1,8 +1,263 @@
 {% extends "base.html" %}
 {% block title %}Подключение · HamaliVPN{% endblock %}
 {% block body %}
-<main class="cv2-shell">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
+:root {
+  --bg-color: #0f172a;
+  --text-color: #f8fafc;
+  --text-secondary: #94a3b8;
+  --primary-color: #3b82f6;
+  --primary-hover: #2563eb;
+  --glass-bg: rgba(30, 41, 59, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --accent: #8b5cf6;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* Animated Background */
+.mesh-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  overflow: hidden;
+  background-color: var(--bg-color);
+}
+.mesh-blob {
+  position: absolute;
+  filter: blur(80px);
+  border-radius: 50%;
+  opacity: 0.5;
+  animation: float 20s infinite ease-in-out;
+}
+.blob-1 {
+  top: -10%; left: -10%;
+  width: 500px; height: 500px;
+  background: radial-gradient(circle, rgba(59,130,246,0.4) 0%, rgba(59,130,246,0) 70%);
+  animation-delay: 0s;
+}
+.blob-2 {
+  bottom: -10%; right: -10%;
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(139,92,246,0.3) 0%, rgba(139,92,246,0) 70%);
+  animation-delay: -5s;
+}
+.blob-3 {
+  top: 40%; left: 50%;
+  width: 400px; height: 400px;
+  background: radial-gradient(circle, rgba(16,185,129,0.2) 0%, rgba(16,185,129,0) 70%);
+  animation-delay: -10s;
+}
+@keyframes float {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.9); }
+}
+
+.cv2-shell {
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 24px 20px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  z-index: 1;
+}
+
+.cv2-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 40px;
+  animation: slideDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.cv2-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.cv2-logo-mark {
+  width: 40px; height: 40px;
+  background: linear-gradient(135deg, var(--primary-color), var(--accent));
+  border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 20px; color: white;
+  box-shadow: 0 4px 15px rgba(59,130,246,0.3);
+}
+.cv2-logo-name {
+  font-weight: 700; font-size: 24px; letter-spacing: -0.5px;
+}
+
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 24px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.glass-card:nth-child(2) { animation-delay: 0.1s; }
+.glass-card:nth-child(3) { animation-delay: 0.2s; }
+
+.cv2-hero {
+  text-align: center;
+  margin-bottom: 30px;
+  animation: fadeIn 0.8s ease both;
+}
+.cv2-title {
+  font-size: 32px; font-weight: 800; margin: 0 0 8px; letter-spacing: -1px;
+}
+.cv2-title-accent {
+  background: linear-gradient(135deg, var(--primary-color), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.cv2-subtitle {
+  color: var(--text-secondary); font-size: 16px; margin: 0;
+}
+
+.cv2-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 4px solid var(--warning);
+  color: var(--warning);
+  padding: 12px 16px;
+  border-radius: 0 12px 12px 0;
+  font-size: 14px;
+  margin: 16px 0;
+  line-height: 1.5;
+}
+
+/* Happ Connect Button */
+.happ-btn {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  color: white;
+  text-decoration: none;
+  padding: 20px;
+  border-radius: 20px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 10px 25px rgba(124, 58, 237, 0.3);
+  position: relative;
+  overflow: hidden;
+}
+.happ-btn:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 15px 35px rgba(124, 58, 237, 0.4);
+}
+.happ-btn:active {
+  transform: translateY(1px) scale(0.98);
+}
+.happ-btn::after {
+  content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: 0.5s;
+}
+.happ-btn:hover::after { left: 100%; }
+
+.happ-icon {
+  width: 52px; height: 52px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+  flex-shrink: 0;
+}
+.happ-info { flex: 1; }
+.happ-info b { display: block; font-size: 18px; margin-bottom: 4px; font-weight: 700; }
+.happ-info small { opacity: 0.8; font-size: 13px; font-weight: 500; }
+
+/* Setup steps */
+.step-num {
+  width: 28px; height: 28px;
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--primary-color);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 14px;
+  margin-right: 12px; flex-shrink: 0;
+}
+.step-title {
+  display: flex; align-items: center; margin-bottom: 16px; font-size: 18px; font-weight: 600;
+}
+
+/* Manual Link */
+details {
+  background: rgba(255,255,255,0.03);
+  border-radius: 16px;
+  overflow: hidden;
+  margin-top: 20px;
+}
+summary {
+  padding: 16px; cursor: pointer; display: flex; align-items: center; gap: 10px;
+  font-weight: 500; font-size: 15px; color: var(--text-secondary);
+  transition: background 0.2s;
+}
+summary:hover { background: rgba(255,255,255,0.05); color: white; }
+summary::marker { display: none; content: ""; }
+summary::-webkit-details-marker { display: none; }
+
+.manual-body { padding: 0 16px 16px; }
+.copy-row {
+  display: flex; gap: 8px; margin-top: 12px;
+}
+.copy-input {
+  flex: 1; background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border);
+  color: var(--text-color); padding: 12px; border-radius: 10px; font-family: monospace; font-size: 13px; outline: none;
+}
+.btn-secondary {
+  background: rgba(255,255,255,0.1); border: none; color: white; padding: 0 16px;
+  border-radius: 10px; font-weight: 600; cursor: pointer; transition: 0.2s;
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.2); }
+
+.qr-box { text-align: center; margin: 16px 0; }
+.qr-box img { max-width: 180px; border-radius: 16px; padding: 8px; background: white; }
+
+.cv2-footer { margin-top: auto; text-align: center; padding-top: 30px; }
+.cv2-support {
+  color: var(--text-secondary); text-decoration: none; font-size: 14px; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 8px; transition: 0.2s;
+}
+.cv2-support:hover { color: white; }
+
+@keyframes slideDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+</style>
+
+<!-- Animated Background -->
+<div class="mesh-bg">
+  <div class="mesh-blob blob-1"></div>
+  <div class="mesh-blob blob-2"></div>
+  <div class="mesh-blob blob-3"></div>
+</div>
+
+<main class="cv2-shell">
   <!-- HEADER -->
   <header class="cv2-header">
     <div class="cv2-logo">
@@ -12,34 +267,29 @@
   </header>
 
   {% if expired %}
-  <!-- EXPIRED STATE -->
-  <div class="cv2-expired">
-    <div class="cv2-expired-icon">🔒</div>
-    <h1>Подписка истекла</h1>
-    <p>Откройте Telegram-бот и продлите доступ, чтобы продолжить пользоваться VPN.</p>
-    <a class="cv2-btn-primary" href="https://t.me/{{ support_username.lstrip('@') }}">
-      Открыть поддержку
+  <div class="glass-card" style="text-align: center;">
+    <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
+    <h1 class="cv2-title">Подписка <span class="cv2-title-accent">истекла</span></h1>
+    <p class="cv2-subtitle" style="margin-bottom: 24px;">Откройте Telegram-бот и продлите доступ, чтобы продолжить пользоваться VPN.</p>
+    <a class="happ-btn" href="https://t.me/{{ support_username.lstrip('@') }}" style="justify-content: center; background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));">
+      <b>Открыть поддержку</b>
     </a>
   </div>
 
   {% elif limit_reached %}
-  <!-- DEVICE LIMIT STATE -->
-  <div class="cv2-expired">
-    <div class="cv2-expired-icon">📱</div>
-    <h1>Лимит устройств достигнут</h1>
-    <p>
-      Для этой подписки доступно устройств: <b>{{ subscription.device_limit }}</b>.
-      Все слоты уже заняты, поэтому новая ссылка не выдана.
+  <div class="glass-card" style="text-align: center;">
+    <div style="font-size: 48px; margin-bottom: 16px;">📱</div>
+    <h1 class="cv2-title">Лимит <span class="cv2-title-accent">устройств</span></h1>
+    <p class="cv2-subtitle">
+      Для этой подписки доступно устройств: <b>{{ subscription.device_limit }}</b>.<br>
+      Все слоты уже заняты.
     </p>
-    <div class="cv2-warning">
-      Если Happ показывает <b>«ошибка 39»</b>, почти всегда это означает, что ключ уже
-      активирован на другом телефоне или компьютере.
+    <div class="cv2-warning" style="text-align: left;">
+      Если Happ показывает <b>«ошибка 39»</b>, это значит, что ключ уже активирован на другом устройстве.
     </div>
-    <p>
-      Если вы меняете телефон или компьютер — напишите в поддержку, мы освободим старый слот.
-    </p>
-    <a class="cv2-btn-primary" href="https://t.me/{{ support_username.lstrip('@') }}">
-      Написать в поддержку
+    <p class="cv2-subtitle" style="margin-bottom: 24px;">Если вы меняете телефон — напишите нам, мы освободим слот.</p>
+    <a class="happ-btn" href="https://t.me/{{ support_username.lstrip('@') }}" style="justify-content: center; background: linear-gradient(135deg, var(--primary-color), var(--primary-hover));">
+      <b>Написать в поддержку</b>
     </a>
   </div>
 
@@ -47,218 +297,100 @@
   <!-- HERO -->
   <div class="cv2-hero">
     <h1 class="cv2-title">Подключите <span class="cv2-title-accent">устройство</span></h1>
-    <p class="cv2-subtitle">Два шага — и вы в свободном интернете</p>
+    <p class="cv2-subtitle">Один клик — и вы в свободном интернете</p>
     {% if device_slot %}
-    <p class="cv2-subtitle" style="margin-top:8px;font-size:13px;opacity:.72">
-      Слот устройства активирован · лимит подписки {{ subscription.device_limit }} устр.
+    <p class="cv2-subtitle" style="margin-top:12px;font-size:13px;opacity:.72;background:rgba(255,255,255,0.05);padding:6px 12px;border-radius:20px;display:inline-block;">
+      ✅ Слот активирован ({{ subscription.device_limit }} устр.)
     </p>
     {% elif activation_pending %}
-    <p class="cv2-subtitle" style="margin-top:8px;font-size:13px;opacity:.72">
-      Слот ещё свободен · он закрепится только после импорта в приложение
-    </p>
-    <div class="cv2-warning">
-      Важно: нажимайте импорт только на том устройстве, где будете пользоваться VPN.
-      На тарифе «1 устройство» первый импорт закрепляет ключ за этим телефоном или компьютером.
+    <div class="cv2-warning" style="border-radius: 12px; text-align: left; margin: 20px auto 0;">
+      <b>Важно:</b> нажимайте импорт только на том устройстве, где будете пользоваться VPN.
     </div>
     {% endif %}
   </div>
 
-  <!-- STEPS -->
-  <div class="cv2-steps">
+  <div class="glass-card">
+    <div class="step-title"><div class="step-num">1</div> Скачайте приложение</div>
+    <a class="happ-btn" href="https://apps.apple.com/app/id6477546686" target="_blank" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); box-shadow: none; margin-bottom: 20px;">
+      <div class="happ-icon" style="background: rgba(255,255,255,0.1);">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="white"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="happ-info">
+        <b>Установить Happ</b>
+        <small>Официальное приложение VPN</small>
+      </div>
+    </a>
 
-    <!-- STEP 1: Install App -->
-    <div class="cv2-step">
-      <div class="cv2-step-header">
-        <div class="cv2-step-num">1</div>
-        <div class="cv2-step-meta">
-          <h2 class="cv2-step-title">Установите приложение</h2>
-          <p class="cv2-step-desc">Выберите под ваше устройство</p>
+    <div class="step-title"><div class="step-num">2</div> Импортируйте ключ</div>
+    <a class="happ-btn cv2-import-action" href="{{ happ_link }}">
+      <div class="happ-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="white"><path d="M5 12h14M12 5l7 7-7 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="happ-info">
+        <b>Подключить в 1 клик</b>
+        <small>Happ настроится автоматически</small>
+      </div>
+    </a>
+
+    <details>
+      <summary>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <span>Ручное подключение</span>
+      </summary>
+      <div class="manual-body">
+        {% if subscription_url %}
+        {% if qr %}
+        <div class="qr-box">
+          <img src="{{ qr }}" alt="QR-код">
         </div>
-      </div>
-
-      <div class="cv2-apps">
-
-        <a class="cv2-app" href="https://apps.apple.com/app/streisand/id6450534064" target="_blank">
-          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #ff6b35, #f7931e);">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-          </div>
-          <div class="cv2-app-info">
-            <b>Streisand</b>
-            <small>iOS · macOS</small>
-          </div>
-          <div class="cv2-app-badge">Топ выбор</div>
-          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-app" href="https://apps.apple.com/app/v2raytun/id6476628951" target="_blank">
-          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
-          </div>
-          <div class="cv2-app-info">
-            <b>v2RayTun</b>
-            <small>iOS · Android · Desktop</small>
-          </div>
-          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-app" href="https://hiddify.com/download" target="_blank">
-          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #0ea5e9, #0284c7);">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18"/></svg>
-          </div>
-          <div class="cv2-app-info">
-            <b>Hiddify</b>
-            <small>Windows · macOS · Linux · Android</small>
-          </div>
-          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-app" href="{{ happ_link }}" target="_blank">
-          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          </div>
-          <div class="cv2-app-info">
-            <b>Happ</b>
-            <small>iOS · Android · Windows · macOS · Linux</small>
-          </div>
-          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-app" href="https://incy.cc" target="_blank">
-          <div class="cv2-app-icon" style="background: linear-gradient(135deg, #14b8a6, #2563eb);">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><path d="M12 2 4 5v6c0 5 3.4 9.7 8 11 4.6-1.3 8-6 8-11V5l-8-3zm3.7 7.7-4.5 4.5a1 1 0 0 1-1.4 0l-1.9-1.9 1.4-1.4 1.2 1.2 3.8-3.8 1.4 1.4z"/></svg>
-          </div>
-          <div class="cv2-app-info">
-            <b>INCY</b>
-            <small>iOS · Android · Desktop</small>
-          </div>
-          <div class="cv2-app-badge">Быстрый импорт</div>
-          <svg class="cv2-app-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-      </div>
-    </div>
-
-    <!-- DIVIDER -->
-    <div class="cv2-step-divider">
-      <div class="cv2-divider-line"></div>
-      <div class="cv2-divider-dot"></div>
-      <div class="cv2-divider-line"></div>
-    </div>
-
-    <!-- STEP 2: Connect subscription -->
-    <div class="cv2-step">
-      <div class="cv2-step-header">
-        <div class="cv2-step-num">2</div>
-        <div class="cv2-step-meta">
-          <h2 class="cv2-step-title">Подключите подписку</h2>
-          <p class="cv2-step-desc">Нажмите кнопку — приложение откроется и всё настроит само</p>
-        </div>
-      </div>
-
-      <div class="cv2-connect-buttons">
-        <a class="cv2-connect-btn cv2-import-action" href="{{ hiddify_link }}">
-          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #0ea5e9, #0284c7);">H</div>
-          <div class="cv2-connect-info">
-            <b>Импорт в Hiddify</b>
-            <small>iOS · Android · Windows · macOS</small>
-          </div>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-connect-btn cv2-import-action" href="{{ v2raytun_link }}">
-          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">V</div>
-          <div class="cv2-connect-info">
-            <b>Импорт в v2RayTun</b>
-            <small>iOS · Android · Desktop</small>
-          </div>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        <a class="cv2-connect-btn cv2-import-action" href="{{ happ_link }}">
-          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #a855f7, #7c3aed);">H</div>
-          <div class="cv2-connect-info">
-            <b>Импорт в Happ</b>
-            <small>iOS · Android · Windows · macOS · Linux</small>
-          </div>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-
-        {% if incy_link %}
-        <a class="cv2-connect-btn cv2-import-action" href="{{ incy_link }}">
-          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #14b8a6, #2563eb);">I</div>
-          <div class="cv2-connect-info">
-            <b>Импорт в INCY</b>
-            <small>Зашифрованная ссылка crypt1 · iOS · Android · Desktop</small>
-          </div>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
         {% endif %}
-
-        <a class="cv2-connect-btn cv2-import-action" href="{{ streisand_link }}">
-          <div class="cv2-connect-icon" style="background: linear-gradient(135deg, #ff6b35, #f7931e);">S</div>
-          <div class="cv2-connect-info">
-            <b>Импорт в Streisand</b>
-            <small>iOS · macOS</small>
-          </div>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg>
-        </a>
-      </div>
-
-      <!-- MANUAL -->
-      <details class="cv2-manual">
-        <summary class="cv2-manual-toggle">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-          Подключить вручную (скопировать ссылку)
-        </summary>
-        <div class="cv2-manual-body">
-          {% if subscription_url %}
-          {% if qr %}
-          <div class="cv2-qr-wrap">
-            <img class="cv2-qr" src="{{ qr }}" alt="QR-код подписки">
-            <p class="cv2-qr-hint">Отсканируйте QR-код в приложении</p>
-          </div>
-          {% endif %}
-          <div class="cv2-copy-row">
-            <input id="sub-url" class="cv2-copy-input" readonly value="{{ subscription_url }}">
-            <button class="cv2-copy-btn" data-copy="#sub-url">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
-              Копировать
-            </button>
-          </div>
-          {% else %}
-          <p class="cv2-step-desc" style="margin:0 0 14px">
-            Ручная ссылка будет создана только после подтверждения. Это защищает лимит устройств:
-            предпросмотр Telegram, WhatsApp или браузер больше не занимает слот.
-          </p>
-          <a class="cv2-copy-btn" href="{{ manual_link }}" style="display:inline-flex;text-decoration:none">
-            Создать ручную ссылку
-          </a>
-          {% endif %}
+        <div class="copy-row">
+          <input id="sub-url" class="copy-input" readonly value="{{ subscription_url }}">
+          <button class="btn-secondary cv2-copy-btn" data-copy="#sub-url">Копировать</button>
         </div>
-      </details>
-    </div>
+        {% else %}
+        <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+          Ручная ссылка будет создана только после подтверждения. Это защищает ваш слот устройства.
+        </p>
+        <a class="btn-secondary" href="{{ manual_link }}" style="display:inline-block; padding:10px 16px; text-decoration:none;">Создать ручную ссылку</a>
+        {% endif %}
+      </div>
+    </details>
   </div>
-
   {% endif %}
 
-  <!-- FOOTER -->
   <footer class="cv2-footer">
     <a class="cv2-support" href="https://t.me/{{ support_username.lstrip('@') }}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
-      Нужна помощь? Написать в поддержку
+      Поддержка HamaliVPN
     </a>
   </footer>
-
 </main>
+
 {% if activation_pending and subscription.device_limit <= 1 %}
 <script>
   document.querySelectorAll(".cv2-import-action").forEach((link) => {
     link.addEventListener("click", (event) => {
-      if (!window.confirm("Этот тариф рассчитан на 1 устройство. Первый импорт закрепит ключ за текущим телефоном или компьютером. Продолжить подключение именно на этом устройстве?")) {
+      if (!window.confirm("Этот тариф рассчитан на 1 устройство. Первый импорт закрепит ключ за текущим телефоном. Продолжить подключение именно на этом устройстве?")) {
         event.preventDefault();
       }
     });
   });
 </script>
 {% endif %}
+<script>
+  // Simple copy script replacement to avoid relying on external scripts if they break
+  document.querySelectorAll('.cv2-copy-btn').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const target = document.querySelector(this.getAttribute('data-copy'));
+      if(target) {
+        target.select();
+        document.execCommand('copy');
+        const oldText = this.innerText;
+        this.innerText = 'Скопировано!';
+        setTimeout(() => this.innerText = oldText, 2000);
+      }
+    });
+  });
+</script>
 {% endblock %}
