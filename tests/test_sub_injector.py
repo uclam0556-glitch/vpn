@@ -95,6 +95,20 @@ def test_incy_flattens_integrated_xray_json_without_mutating_source() -> None:
                     },
                 },
             },
+            {
+                "tag": "youtube",
+                "protocol": "vless",
+                "settings": {
+                    "vnext": [
+                        {
+                            "address": "auxiliary.example.com",
+                            "port": 443,
+                            "users": [{"id": "auxiliary-uuid", "encryption": "none"}],
+                        }
+                    ]
+                },
+                "streamSettings": {"network": "tcp", "security": "none"},
+            },
             {"tag": "direct", "protocol": "freedom"},
         ],
     }
@@ -124,6 +138,7 @@ def test_incy_flattens_integrated_xray_json_without_mutating_source() -> None:
         "%5B%D0%A0%D0%B5%D0%B7%D0%B5%D1%80%D0%B2%5D%20%D0%A4%D1%80%D0%B0%D0%BD%D1%86%D0%B8%D1%8F"
         in links[0]
     )
+    assert "auxiliary.example.com" not in links[0]
     assert config == original
 
 

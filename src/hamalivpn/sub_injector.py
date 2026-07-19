@@ -133,6 +133,21 @@ def _xray_vless_share_links(config, profile_name="Integrated"):
         for outbound in outbounds
         if isinstance(outbound, dict) and outbound.get("protocol") == "vless"
     ]
+    if vless_outbounds:
+        # A stored IntegrationNode is one full Happ profile. Additional VLESS
+        # outbounds such as youtube/obhod/proxy-2 are routing legs inside that
+        # profile, not independent servers. A share-link cannot carry those
+        # routing rules, so expose the primary outbound only.
+        primary = next(
+            (
+                outbound
+                for outbound in vless_outbounds
+                if str(outbound.get("tag") or "").strip().lower()
+                in {"proxy", "primary", "main", "default"}
+            ),
+            vless_outbounds[0],
+        )
+        vless_outbounds = [primary]
     links = []
 
     for outbound in vless_outbounds:
@@ -249,13 +264,10 @@ def _xray_vless_share_links(config, profile_name="Integrated"):
                         else str(finalmask)
                     )
 
-                outbound_tag = str(outbound.get("tag") or "").strip()
                 config_name = str(config.get("remarks") or "").strip()
                 title_parts = [str(profile_name or config_name or "Integrated").strip()]
                 if config_name and config_name not in title_parts:
                     title_parts.append(config_name)
-                if len(vless_outbounds) > 1 and outbound_tag and outbound_tag not in title_parts:
-                    title_parts.append(outbound_tag)
                 title = " · ".join(part for part in title_parts if part)[:200]
                 label = happ_label(title, "Integrated | VLESS | JSON")
                 query = urllib.parse.urlencode(
