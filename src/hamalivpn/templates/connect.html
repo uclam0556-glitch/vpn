@@ -88,7 +88,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 40px;
+  margin-bottom: 24px;
   animation: slideDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .cv2-logo {
@@ -121,6 +121,56 @@ body {
 }
 .glass-card:nth-child(2) { animation-delay: 0.1s; }
 .glass-card:nth-child(3) { animation-delay: 0.2s; }
+
+/* Remnawave Info Card specific */
+.remna-info-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.remna-info-icon {
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--success);
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(16,185,129,0.3);
+}
+.remna-info-icon.expired {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--danger);
+  border-color: rgba(239,68,68,0.3);
+}
+.remna-info-title {
+  flex: 1;
+}
+.remna-info-title h2 {
+  margin: 0; font-size: 18px; font-weight: 700;
+}
+.remna-info-title span {
+  font-size: 13px; color: var(--text-secondary);
+}
+
+.remna-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.remna-cell {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255,255,255,0.05);
+  border-radius: 12px;
+  padding: 12px;
+}
+.remna-cell-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-secondary); margin-bottom: 4px;
+}
+.remna-cell-value {
+  font-size: 15px; font-weight: 600;
+  word-break: break-all;
+}
 
 .cv2-hero {
   text-align: center;
@@ -266,6 +316,69 @@ summary::-webkit-details-marker { display: none; }
     </div>
   </header>
 
+  <!-- Remnawave Info Card -->
+  {% if remnawave_data %}
+  <div class="glass-card" style="padding: 20px;">
+    <div class="remna-info-header">
+      <div class="remna-info-icon {% if remnawave_data.status != 'Активна' %}expired{% endif %}">
+        {% if remnawave_data.status == 'Активна' %}
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        {% else %}
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        {% endif %}
+      </div>
+      <div class="remna-info-title">
+        <h2>{{ remnawave_data.username }}</h2>
+        {% if remnawave_data.expire_at %}
+        <span>Истекает {{ remnawave_data.expire_at.strftime('%d.%m.%Y') }}</span>
+        {% else %}
+        <span>Безлимитно по времени</span>
+        {% endif %}
+      </div>
+    </div>
+    <div class="remna-grid">
+      <div class="remna-cell">
+        <div class="remna-cell-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Имя пользователя
+        </div>
+        <div class="remna-cell-value">{{ remnawave_data.username }}</div>
+      </div>
+      <div class="remna-cell">
+        <div class="remna-cell-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m9 11 3 3L22 4"/></svg>
+          Статус
+        </div>
+        <div class="remna-cell-value" style="color: {% if remnawave_data.status == 'Активна' %}var(--success){% else %}var(--danger){% endif %}">
+          {{ remnawave_data.status }}
+        </div>
+      </div>
+      <div class="remna-cell">
+        <div class="remna-cell-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          Истекает
+        </div>
+        <div class="remna-cell-value">
+          {% if remnawave_data.expire_at %}
+          {{ remnawave_data.expire_at.strftime('%d.%m.%Y') }}
+          {% else %}
+          Никогда
+          {% endif %}
+        </div>
+      </div>
+      <div class="remna-cell">
+        <div class="remna-cell-label">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          Трафик
+        </div>
+        <div class="remna-cell-value">
+          {{ remnawave_data.used_gb }} GiB / {% if remnawave_data.limit_gb == 0 %}∞{% else %}{{ remnawave_data.limit_gb }} GiB{% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   {% if expired %}
   <div class="glass-card" style="text-align: center;">
     <div style="font-size: 48px; margin-bottom: 16px;">🔒</div>
@@ -294,21 +407,6 @@ summary::-webkit-details-marker { display: none; }
   </div>
 
   {% else %}
-  <!-- HERO -->
-  <div class="cv2-hero">
-    <h1 class="cv2-title">Подключите <span class="cv2-title-accent">устройство</span></h1>
-    <p class="cv2-subtitle">Один клик — и вы в свободном интернете</p>
-    {% if device_slot %}
-    <p class="cv2-subtitle" style="margin-top:12px;font-size:13px;opacity:.72;background:rgba(255,255,255,0.05);padding:6px 12px;border-radius:20px;display:inline-block;">
-      ✅ Слот активирован ({{ subscription.device_limit }} устр.)
-    </p>
-    {% elif activation_pending %}
-    <div class="cv2-warning" style="border-radius: 12px; text-align: left; margin: 20px auto 0;">
-      <b>Важно:</b> нажимайте импорт только на том устройстве, где будете пользоваться VPN.
-    </div>
-    {% endif %}
-  </div>
-
   <div class="glass-card">
     <div class="step-title"><div class="step-num">1</div> Скачайте приложение</div>
     <a class="happ-btn" href="https://apps.apple.com/app/id6477546686" target="_blank" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); box-shadow: none; margin-bottom: 20px;">
@@ -379,7 +477,6 @@ summary::-webkit-details-marker { display: none; }
 </script>
 {% endif %}
 <script>
-  // Simple copy script replacement to avoid relying on external scripts if they break
   document.querySelectorAll('.cv2-copy-btn').forEach(btn => {
     btn.addEventListener('click', function() {
       const target = document.querySelector(this.getAttribute('data-copy'));

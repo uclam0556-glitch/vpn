@@ -17,6 +17,7 @@ from .db import get_session
 from .models import Customer, PaymentStatus, PaymentTransaction
 import json
 import secrets
+from .tma_api import tma_router
 
 settings = get_settings()
 _docs_enabled = settings.debug and not settings.is_production
@@ -28,6 +29,8 @@ app = FastAPI(
     openapi_url="/openapi.json" if _docs_enabled else None,
 )
 logger = logging.getLogger(__name__)
+
+app.include_router(tma_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -416,7 +419,7 @@ async def _portal_customer(user: dict, db: AsyncSession, *, lock: bool = False) 
 
 async def _reseller_or_admin(user: dict, db: AsyncSession, *, lock: bool = False) -> Customer:
     customer = await _portal_customer(user, db, lock=lock)
-    if customer.role not in ["reseller", "super_admin"]:
+    if customer.role not in ["reseller", "admin", "super_admin"]:
         raise HTTPException(403, "Not a reseller")
     return customer
 
@@ -623,8 +626,39 @@ async def get_all_resellers(user: dict = Depends(get_portal_user), db: AsyncSess
     if not customer or customer.role != "super_admin":
         raise HTTPException(403, "Not an admin")
         
-    resellers = (await db.execute(select(Customer).filter(Customer.role.in_(["reseller", "super_admin"])))).scalars().all()
-    return [{"id": r.id, "telegram_id": r.telegram_id, "name": r.full_name, "balance": r.balance_rub, "level": r.reseller_level, "is_blocked": r.is_blocked, "portal_access_key": r.portal_access_key} for r in resellers]
+    resellers = (await db.execute(select(Customer).filter(Customer.role.in_(["reseller", "admin", "super_admin"])))).scalars().all()
+    return [{"id": r.id, "telegram_id": r.telegram_id, "name": r.full_name, "balance": r.balance_rub, "level": r.reseller_level, "is_blocked": r.is_blocked, "portal_access_key": r.portal_access_key, "role": r.role} for r in resellers]
+
+@app.get("/api/admin/resellers/{reseller_id}/stats")
+async def admin_reseller_stats(reseller_id: int, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
+    await _admin_or_403(user, db)
+    target_admin = await db.get(Customer, reseller_id)
+    if not target_admin:
+        raise HTTPException(404, "Not found")
+        
+    network_clients = (await db.execute(select(Customer.id).filter_by(referrer_id=target_admin.id))).scalars().all()
+    network_ids = list(network_clients) + [target_admin.id]
+    
+    txs_all_rows = (await db.execute(
+        select(PaymentTransaction).filter(
+            PaymentTransaction.customer_id.in_(network_ids),
+            PaymentTransaction.status == PaymentStatus.paid
+        ).order_by(desc(PaymentTransaction.created_at))
+    )).scalars().all()
+    
+    subs_all_rows = (await db.execute(
+        select(Subscription).filter(
+            Subscription.customer_id.in_(network_ids)
+        ).order_by(desc(Subscription.created_at))
+    )).scalars().all()
+    
+    return {
+        "network_size": len(network_clients),
+        "total_revenue": sum(t.amount for t in txs_all_rows),
+        "total_keys": len(subs_all_rows),
+        "recent_sales": [{"amount": t.amount, "date": t.created_at.isoformat()} for t in txs_all_rows[:10]],
+        "recent_keys": [{"id": s.id, "status": s.status.value, "date": s.created_at.isoformat()} for s in subs_all_rows[:10]]
+    }
 
 @app.post("/api/admin/resellers/{reseller_id}/topup")
 async def topup_reseller(reseller_id: int, req: AdminTopupRequest, user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
@@ -703,7 +737,7 @@ async def _admin_or_403(user: dict, db: AsyncSession) -> Customer:
 async def admin_dashboard(user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)):
     await _admin_or_403(user, db)
     resellers = (await db.execute(
-        select(func.count()).select_from(Customer).where(Customer.role.in_(["reseller", "super_admin"]))
+        select(func.count()).select_from(Customer).where(Customer.role.in_(["reseller", "admin", "super_admin"]))
     )).scalar() or 0
     clients = (await db.execute(
         select(func.count()).select_from(Customer).where(Customer.referrer_id.is_not(None))
@@ -715,7 +749,7 @@ async def admin_dashboard(user: dict = Depends(get_portal_user), db: AsyncSessio
         select(func.coalesce(func.sum(PaymentTransaction.amount), 0)).where(PaymentTransaction.status == PaymentStatus.paid)
     )).scalar() or 0
     reseller_balance = (await db.execute(
-        select(func.coalesce(func.sum(Customer.balance_rub), 0)).where(Customer.role.in_(["reseller", "super_admin"]))
+        select(func.coalesce(func.sum(Customer.balance_rub), 0)).where(Customer.role.in_(["reseller", "admin", "super_admin"]))
     )).scalar() or 0
     recent = (await db.execute(
         select(PaymentTransaction).where(PaymentTransaction.status == PaymentStatus.paid)
@@ -1726,6 +1760,19 @@ if not os.path.isdir(PORTAL_ASSETS_DIR):
 if os.path.isdir(PORTAL_ASSETS_DIR):
     app.mount("/portal/assets", StaticFiles(directory=PORTAL_ASSETS_DIR), name="portal_assets")
 
+TMA_DIR = os.path.join(PACKAGE_DIR, "tma_web")
+if os.path.isdir(TMA_DIR):
+    app.mount("/tma", StaticFiles(directory=TMA_DIR, html=True), name="tma")
+
+@app.get("/tma", include_in_schema=False)
+async def serve_tma_root():
+    index_path = os.path.join(TMA_DIR, "index.html")
+    if os.path.exists(index_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(index_path)
+    return {"error": "TMA not built"}
+
+
 
 def _connect_import_path(access_token: str, client: str) -> str:
     return f"/{access_token}/import/{client}"
@@ -1751,6 +1798,45 @@ def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
     }
 
 
+async def _fetch_remnawave_data(subscription: Subscription) -> dict:
+    default_data = {
+        "status": "Активна" if subscription.status.name == "active" else "Истекла",
+        "used_gb": 0,
+        "limit_gb": subscription.traffic_limit_gb or 0,
+        "username": subscription_short_code(subscription),
+        "expire_at": subscription.expires_at
+    }
+    if not subscription.remnawave_uuid:
+        return default_data
+
+    token = settings.remnawave_api_token.get_secret_value()
+    base_url = settings.panel_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            resp = await client.get(
+                f"{base_url}/api/users/{subscription.remnawave_uuid}",
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("response", resp.json())
+                used = data.get("trafficUsedBytes", 0) / (1024**3)
+                limit = data.get("trafficLimitBytes", 0) / (1024**3)
+                default_data["used_gb"] = round(used, 2)
+                default_data["limit_gb"] = round(limit, 2)
+                
+                status_val = data.get("status", "")
+                if status_val == "ACTIVE":
+                    default_data["status"] = "Активна"
+                elif status_val == "EXPIRED":
+                    default_data["status"] = "Истекла"
+                elif status_val == "DISABLED":
+                    default_data["status"] = "Заблокирована"
+                elif status_val == "LIMITED":
+                    default_data["status"] = "Лимит исчерпан"
+    except Exception as e:
+        logger.error(f"Failed to fetch remnawave data: {e}")
+    return default_data
+
 def _connect_template_response(
     request: Request,
     access_token: str,
@@ -1764,6 +1850,15 @@ def _connect_template_response(
 ) -> HTMLResponse:
     public_code = subscription_short_code(subscription)
     links = _connect_links(public_code, subscription_url)
+    
+    # Defaults for remnawave_data
+    remnawave_data = {
+        "status": "Активна" if not expired else "Истекла",
+        "used_gb": 0,
+        "limit_gb": subscription.traffic_limit_gb or 0,
+        "username": public_code,
+        "expire_at": subscription.expires_at
+    }
     return CONNECT_TEMPLATES.TemplateResponse(
         request,
         "connect.html",
@@ -1781,6 +1876,7 @@ def _connect_template_response(
             "health_status": subscription.health_status,
             "health_message": subscription.health_message,
             "endpoint_count": subscription.health_endpoint_count,
+            "remnawave_data": getattr(request.state, "remnawave_data", remnawave_data),
         },
     )
 
@@ -1807,6 +1903,8 @@ async def public_connect_import(
     subscription = await get_subscription_by_token(db, access_token)
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription not found")
+
+    request.state.remnawave_data = await _fetch_remnawave_data(subscription)
 
     expired = as_utc(subscription.expires_at) <= utcnow()
     if expired:
@@ -1858,6 +1956,16 @@ async def public_connect_import(
         response = RedirectResponse(url=deeplink, status_code=302)
     _set_slot_cookie(response, subscription, slot)
     return response
+@app.get("/api/internal/integrated_nodes")
+async def internal_integrated_nodes(db: AsyncSession = Depends(get_session)):
+    """Return all active integration nodes for injection into the main subscription."""
+    from .models import IntegrationNode
+    result = await db.execute(
+        select(IntegrationNode).filter(IntegrationNode.is_active == True)
+    )
+    nodes = result.scalars().all()
+    return {"nodes": [node.raw_link for node in nodes]}
+
 
 
 @app.get("/connect/{access_token}", response_class=HTMLResponse)
@@ -1877,6 +1985,8 @@ async def public_connect_page(
     subscription = await get_subscription_by_token(db, access_token)
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription not found")
+
+    request.state.remnawave_data = await _fetch_remnawave_data(subscription)
 
     expires_at = as_utc(subscription.expires_at)
     expired = expires_at <= utcnow()
