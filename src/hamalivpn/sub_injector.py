@@ -189,8 +189,19 @@ def _xray_vless_share_links(config, profile_name="Integrated"):
                             else str(alpn or ""),
                         }
                     )
-                    if tls.get("allowInsecure") is True:
-                        params["insecure"] = "1"
+                    tls_share_fields = {
+                        "pcs": tls.get("pinnedPeerCertSha256"),
+                        "vcn": tls.get("verifyPeerCertByName"),
+                        "ech": tls.get("echConfigList"),
+                    }
+                    params.update(
+                        {
+                            key: ",".join(str(item) for item in value)
+                            if isinstance(value, list)
+                            else str(value or "")
+                            for key, value in tls_share_fields.items()
+                        }
+                    )
 
                 if network == "ws":
                     transport = stream.get("wsSettings") or {}
@@ -205,9 +216,21 @@ def _xray_vless_share_links(config, profile_name="Integrated"):
                         params["mode"] = "multi"
                 elif network in {"xhttp", "splithttp"}:
                     transport = stream.get("xhttpSettings") or stream.get("splithttpSettings") or {}
+                    # INCY normalizes legacy SplitHTTP to XHTTP. Preserve the
+                    # complete `extra` payload: it can define XMUX, padding and
+                    # split-download transports required by the provider.
+                    params["type"] = "xhttp"
                     params["path"] = str(transport.get("path") or "/")
                     params["host"] = str(transport.get("host") or "")
                     params["mode"] = str(transport.get("mode") or "")
+                    if transport.get("extra") is not None:
+                        params["extra"] = json.dumps(
+                            transport["extra"], ensure_ascii=False, separators=(",", ":")
+                        )
+                    if transport.get("xhttpSessionIDTable") is not None:
+                        params["sit"] = str(transport["xhttpSessionIDTable"])
+                    if transport.get("xhttpSessionIDLength") is not None:
+                        params["sil"] = str(transport["xhttpSessionIDLength"])
                 elif network in {"http", "h2"}:
                     transport = stream.get("httpSettings") or {}
                     params["path"] = str(transport.get("path") or "/")
@@ -217,6 +240,14 @@ def _xray_vless_share_links(config, profile_name="Integrated"):
                     header = tcp.get("header") or {}
                     if header_type := header.get("type"):
                         params["headerType"] = str(header_type)
+
+                if stream.get("finalmask") is not None:
+                    finalmask = stream["finalmask"]
+                    params["fm"] = (
+                        json.dumps(finalmask, ensure_ascii=False, separators=(",", ":"))
+                        if isinstance(finalmask, (dict, list))
+                        else str(finalmask)
+                    )
 
                 outbound_tag = str(outbound.get("tag") or "").strip()
                 config_name = str(config.get("remarks") or "").strip()

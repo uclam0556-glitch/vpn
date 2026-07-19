@@ -1,5 +1,6 @@
 import base64
 import json
+import urllib.parse
 
 from hamalivpn.sub_injector import (
     CLUSTER_REMARKS,
@@ -75,14 +76,22 @@ def test_incy_flattens_integrated_xray_json_without_mutating_source() -> None:
                     ]
                 },
                 "streamSettings": {
-                    "network": "tcp",
-                    "security": "reality",
-                    "realitySettings": {
-                        "publicKey": "public-key",
+                    "network": "xhttp",
+                    "security": "tls",
+                    "tlsSettings": {
                         "serverName": ["www.example.com"],
                         "fingerprint": "firefox",
-                        "shortId": ["abcd"],
-                        "spiderX": "/",
+                        "alpn": ["h2", "http/1.1"],
+                        "pinnedPeerCertSha256": ["certificate-pin"],
+                    },
+                    "xhttpSettings": {
+                        "path": "/api/tunnel",
+                        "host": "www.example.com",
+                        "mode": "auto",
+                        "extra": {
+                            "xmux": {"maxConcurrency": "8-16"},
+                            "xPaddingBytes": "100-1000",
+                        },
                     },
                 },
             },
@@ -97,10 +106,20 @@ def test_incy_flattens_integrated_xray_json_without_mutating_source() -> None:
 
     assert len(links) == 1
     assert links[0].startswith("vless://00000000-0000-0000-0000-000000000001@vpn.example.com:443?")
-    assert "security=reality" in links[0]
-    assert "pbk=public-key" in links[0]
-    assert "sni=www.example.com" in links[0]
-    assert "sid=abcd" in links[0]
+    parsed = urllib.parse.urlsplit(links[0])
+    params = urllib.parse.parse_qs(parsed.query)
+    assert params["type"] == ["xhttp"]
+    assert params["security"] == ["tls"]
+    assert params["sni"] == ["www.example.com"]
+    assert params["alpn"] == ["h2,http/1.1"]
+    assert params["pcs"] == ["certificate-pin"]
+    assert params["path"] == ["/api/tunnel"]
+    assert params["host"] == ["www.example.com"]
+    assert params["mode"] == ["auto"]
+    assert (
+        json.loads(params["extra"][0])
+        == config["outbounds"][0]["streamSettings"]["xhttpSettings"]["extra"]
+    )
     assert (
         "%5B%D0%A0%D0%B5%D0%B7%D0%B5%D1%80%D0%B2%5D%20%D0%A4%D1%80%D0%B0%D0%BD%D1%86%D0%B8%D1%8F"
         in links[0]
