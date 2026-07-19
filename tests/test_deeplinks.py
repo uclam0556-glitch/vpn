@@ -4,6 +4,8 @@ from hamalivpn.deeplinks import (
     happ_deeplink,
     hiddify_deeplink,
     incy_deeplink,
+    incy_integrated_deeplink,
+    incy_integrated_subscription_url,
     incy_subscription_url,
     streisand_deeplink,
     v2raytun_deeplink,
@@ -84,3 +86,24 @@ def test_incy_subscription_url_preserves_and_replaces_query() -> None:
     assert incy_subscription_url("https://sub.example.com/a?client=old&slot=1") == (
         "https://sub.example.com/a?slot=1&client=incy"
     )
+
+
+def test_incy_integrated_subscription_uses_separate_full_config_variant(monkeypatch) -> None:
+    class Result:
+        stdout = "incy://crypt1/full-config-profile"
+
+    calls = {}
+    monkeypatch.setattr("hamalivpn.deeplinks.shutil.which", lambda _name: "/usr/bin/node")
+
+    def fake_run(cmd, **kwargs):
+        calls["payload"] = json.loads(cmd[-1])
+        return Result()
+
+    monkeypatch.setattr("hamalivpn.deeplinks.subprocess.run", fake_run)
+    source = "https://sub.example.com/a?slot=1&client=old"
+
+    assert incy_integrated_subscription_url(source) == (
+        "https://sub.example.com/a?slot=1&client=incy-integrated"
+    )
+    assert incy_integrated_deeplink(source) == "incy://crypt1/full-config-profile"
+    assert calls["payload"]["url"].endswith("slot=1&client=incy-integrated")

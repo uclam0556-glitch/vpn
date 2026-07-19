@@ -66,3 +66,38 @@ async def test_admin_keys_include_client_management_fields(session_factory) -> N
     assert payload[0]["short_code"] == subscription_short_code("access-token-admin-list")
     assert payload[0]["connect_url"].endswith(f"/{payload[0]['short_code']}")
     assert payload[0]["reseller_id"] == reseller.id
+
+
+@pytest.mark.asyncio
+async def test_super_admin_can_create_and_list_separate_subadmins(session_factory) -> None:
+    async with session_factory() as session:
+        session.add(Customer(telegram_id=5392719643, full_name="Owner", role="super_admin"))
+        await session.commit()
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as session:
+            yield session
+
+    async def override_user() -> dict[str, int]:
+        return {"id": 5392719643}
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_portal_user] = override_user
+    try:
+        client = TestClient(app)
+        created = client.post(
+            "/api/admin/subadmins",
+            json={"name": "Support Operator", "telegram_id": 900002},
+        )
+        listed = client.get("/api/admin/subadmins")
+        resellers = client.get("/api/admin/resellers")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert created.status_code == 200
+    assert created.json()["role"] == "admin"
+    assert len(created.json()["portal_access_key"]) >= 32
+    assert listed.status_code == 200
+    assert [item["name"] for item in listed.json()] == ["Support Operator"]
+    assert resellers.status_code == 200
+    assert resellers.json() == []

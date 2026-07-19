@@ -20,6 +20,8 @@ from .deeplinks import (
     happ_deeplink,
     hiddify_deeplink,
     incy_deeplink,
+    incy_integrated_deeplink,
+    incy_integrated_subscription_url,
     incy_subscription_url,
     streisand_deeplink,
     v2raytun_deeplink,
@@ -96,6 +98,7 @@ def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
             "v2raytun_link": _connect_import_path(access_token, "v2raytun"),
             "happ_link": _connect_import_path(access_token, "happ"),
             "incy_link": _connect_import_path(access_token, "incy"),
+            "incy_integrated_link": _connect_import_path(access_token, "incy-integrated"),
             "streisand_link": _connect_import_path(access_token, "streisand"),
             "manual_link": _connect_import_path(access_token, "manual"),
         }
@@ -104,6 +107,7 @@ def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
         "v2raytun_link": v2raytun_deeplink(subscription_url),
         "happ_link": happ_deeplink(subscription_url),
         "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
+        "incy_integrated_link": incy_integrated_deeplink(subscription_url),
         "streisand_link": streisand_deeplink(subscription_url),
         "manual_link": "",
     }
@@ -129,6 +133,9 @@ def _connect_response(
             "subscription": subscription,
             "subscription_url": subscription_url,
             "incy_subscription_url": incy_subscription_url(subscription_url),
+            "incy_integrated_subscription_url": incy_integrated_subscription_url(
+                subscription_url
+            ),
             "qr": qr_data_uri(subscription_url) if subscription_url else None,
             **links,
             "expired": expired,
@@ -222,6 +229,7 @@ async def connect_import_page(
         "v2raytun": links["v2raytun_link"],
         "happ": links["happ_link"],
         "incy": links["incy_link"],
+        "incy-integrated": links["incy_integrated_link"],
         "streisand": links["streisand_link"],
     }.get(client, "")
 

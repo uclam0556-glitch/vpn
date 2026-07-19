@@ -211,7 +211,7 @@ function renderFatal(error = "") {
 // ── shell ────────────────────────────────────────────────────────────────
 function tabsFor(role) {
   if (role === "super_admin") {
-    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["tariffs", "Тарифы"], ["referrals", "Рефералы"], ["allkeys", "Ключи"], ["audit", "Аудит"]];
+    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["subadmins", "Субадмины"], ["tariffs", "Тарифы"], ["referrals", "Рефералы"], ["allkeys", "Ключи"], ["audit", "Аудит"]];
   }
   return [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
 }
@@ -247,6 +247,7 @@ async function renderTab() {
   const view = document.getElementById("view");
   const map = {
     dashboard: viewDashboard, buy: viewBuy, clients: viewClients, resellers: viewResellers,
+    subadmins: viewSubadmins,
     admin: viewAdminDashboard, tariffs: viewTariffs, referrals: viewAdminReferrals, allkeys: viewAllKeys, audit: viewAudit,
   };
   try { await (map[state.tab] || (() => {}))(view); }
@@ -582,6 +583,75 @@ async function viewResellers(view) {
     <div class="rows">
       ${list.length ? list.map(resellerRow).join("") : `<div class="empty">Реселлеров нет</div>`}
     </div>`;
+}
+
+// ── admin: subadmins ────────────────────────────────────────────────────────
+async function viewSubadmins(view) {
+  const list = await api("/admin/subadmins");
+  view.innerHTML = `
+    <div class="section-title"><div><h2>Субадмины</h2>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">Операционные аккаунты с отдельными ключами доступа</div></div>
+      <button class="btn btn--primary btn--sm" data-action="add-subadmin">+ Создать</button></div>
+    <div class="rows">
+      ${list.length ? list.map(subadminRow).join("") : `<div class="empty">Субадминов пока нет</div>`}
+    </div>`;
+}
+
+function subadminRow(item) {
+  return `<div class="row">
+    <div class="row__main">
+      <div class="row__title">${esc(item.name || "Без имени")}
+        <span class="pill">Субадмин</span>
+        ${item.is_blocked ? `<span class="tag tag--disabled">Блок</span>` : `<span class="tag tag--active">Активен</span>`}</div>
+      <div class="row__meta">ID ${item.id} · tg ${(item.telegram_id != null ? item.telegram_id : "—")} · отдельный вход в портал</div>
+    </div>
+    <div class="row__actions"><button class="btn btn--sm" data-subadmin='${esc(JSON.stringify(item))}'>Управление</button></div>
+  </div>`;
+}
+
+function openCreateSubadminModal() {
+  modal(`
+    <h3>Новый субадмин</h3>
+    <p class="sub">Будет создан отдельный ключ входа. Полномочия главного администратора не передаются.</p>
+    <div class="field"><label>Имя *</label><input class="input" id="saName" placeholder="Имя оператора" /></div>
+    <div class="field"><label>Telegram ID (необязательно)</label><input class="input" id="saTg" type="number" placeholder="если знаете — привяжем" /></div>
+    <div class="modal__actions"><button class="btn btn--ghost" data-action="close">Отмена</button><button class="btn btn--primary" id="saSave">Создать</button></div>`);
+  document.getElementById("saSave").addEventListener("click", async () => {
+    const name = document.getElementById("saName").value.trim();
+    const telegramId = document.getElementById("saTg").value.trim();
+    if (!name) return toast("Укажите имя", "err");
+    try {
+      const result = await api("/admin/subadmins", { method: "POST", body: {
+        name, telegram_id: telegramId ? Number(telegramId) : null,
+      }});
+      renderTab();
+      modal(`<h3>Субадмин создан</h3><p class="sub">Передайте этот ключ сотруднику. Позже его можно безопасно заменить.</p>
+        <div class="codebox">${esc(result.portal_access_key)}</div>
+        <div class="modal__actions"><button class="btn btn--primary" data-copy="${esc(result.portal_access_key)}">Скопировать ключ</button><button class="btn btn--ghost" data-action="close">Готово</button></div>`);
+    } catch (err) { toast(err.message, "err"); }
+  });
+}
+
+function openSubadminManageModal(item) {
+  modal(`<h3>${esc(item.name || "Субадмин")}</h3>
+    <p class="sub">ID ${item.id} · tg ${(item.telegram_id != null ? item.telegram_id : "—")}</p>
+    <div class="field"><label>Ключ доступа</label><div class="codebox">${esc(item.portal_access_key || "не задан")}</div></div>
+    <div class="modal__actions">${item.portal_access_key ? `<button class="btn" data-copy="${esc(item.portal_access_key)}">Скопировать</button>` : ""}<button class="btn" id="saRotate">Заменить ключ</button></div>
+    <div class="modal__actions"><button class="btn btn--danger" id="saBlock">${item.is_blocked ? "Разблокировать" : "Заблокировать"}</button><button class="btn btn--ghost" data-action="close">Закрыть</button></div>`);
+  document.getElementById("saRotate").addEventListener("click", async () => {
+    if (!confirm("Заменить ключ? Старый ключ сразу перестанет работать.")) return;
+    try {
+      const result = await api(`/admin/resellers/${item.id}/key`, { method: "POST", body: { key: null } });
+      renderTab();
+      modal(`<h3>Ключ заменён</h3><div class="codebox">${esc(result.portal_access_key)}</div><div class="modal__actions"><button class="btn btn--primary" data-copy="${esc(result.portal_access_key)}">Скопировать</button><button class="btn btn--ghost" data-action="close">Готово</button></div>`);
+    } catch (err) { toast(err.message, "err"); }
+  });
+  document.getElementById("saBlock").addEventListener("click", async () => {
+    try {
+      await api(`/admin/resellers/${item.id}/block`, { method: "POST", body: { blocked: !item.is_blocked } });
+      closeModal(); toast(item.is_blocked ? "Субадмин разблокирован" : "Субадмин заблокирован", "ok"); renderTab();
+    } catch (err) { toast(err.message, "err"); }
+  });
 }
 
 function openCreateResellerModal() {
@@ -934,7 +1004,7 @@ function auditRow(a) {
 // ── delegation ─────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
   const t = e.target.closest(
-    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-openurl],[data-manage],[data-tariff-edit],[data-key-disable],[data-devdel]"
+    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-openurl],[data-manage],[data-subadmin],[data-tariff-edit],[data-key-disable],[data-devdel]"
   );
   if (!t) return;
   if (t.dataset.openurl) return window.open(t.dataset.openurl, "_blank");
@@ -943,12 +1013,14 @@ document.addEventListener("click", (e) => {
   if (a === "logout") { clearKey(); state.me = null; renderLogin(); return; }
   if (a === "close") return closeModal();
   if (a === "add-reseller") return openCreateResellerModal();
+  if (a === "add-subadmin") return openCreateSubadminModal();
   if (a === "add-tariff") return openTariffModal(null);
   if (a === "add-key") return openAdminCreateKeyModal();
   if (t.dataset.copy !== undefined && t.dataset.copy !== "") return copy(t.dataset.copy, "Скопировано");
   if (t.dataset.buy) return openBuyModal(JSON.parse(t.dataset.buy));
   if (t.dataset.client) return showClientModal(JSON.parse(t.dataset.client));
   if (t.dataset.manage) return openResellerManageModal(JSON.parse(t.dataset.manage));
+  if (t.dataset.subadmin) return openSubadminManageModal(JSON.parse(t.dataset.subadmin));
   if (t.dataset.tariffEdit) return openTariffModal(JSON.parse(t.dataset.tariffEdit));
   if (t.dataset.keyDisable) return adminDisableKey(t.dataset.keyDisable);
   if (t.dataset.devdel) { const o = JSON.parse(t.dataset.devdel); return disconnectDevice(o.uuid, o.hwid); }

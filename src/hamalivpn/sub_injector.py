@@ -73,12 +73,22 @@ def profile_title(meta=None):
     return PROFILE_TITLE
 
 
-def is_incy_request(handler):
+def requested_client(handler):
     query = urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query)
-    requested_client = query.get("client", [""])[-1].strip().lower()
+    return query.get("client", [""])[-1].strip().lower()
+
+
+def is_incy_integrated_request(handler):
+    return requested_client(handler) == "incy-integrated"
+
+
+def is_incy_request(handler):
+    client = requested_client(handler)
     user_agent = handler.headers.get("User-Agent", "").strip().lower()
     client_header = handler.headers.get("x-client", "").strip().lower()
-    return requested_client == "incy" or client_header == "incy" or user_agent.startswith("incy/")
+    return client in {"incy", "incy-integrated"} or client_header == "incy" or user_agent.startswith(
+        "incy/"
+    )
 
 
 def incy_compatible_link(link):
@@ -292,7 +302,7 @@ def _share_link_connection_key(link):
         return link.split("#", 1)[0]
 
 
-def incy_integrated_links(items):
+def incy_integrated_links(items, *, include_json=True):
     """Return native share links for integrated nodes without mutating their source data."""
 
     converted = []
@@ -309,6 +319,8 @@ def incy_integrated_links(items):
             continue
 
         if raw_link.startswith(("{", "[")):
+            if not include_json:
+                continue
             try:
                 document = json.loads(raw_link)
             except json.JSONDecodeError:
@@ -328,6 +340,52 @@ def incy_integrated_links(items):
         seen.add(key)
         result.append(link)
     return result
+
+
+def incy_integrated_configs(items):
+    """Build an INCY JSON subscription without flattening full Xray profiles.
+
+    Integrated provider configs often depend on several routed outbounds,
+    custom DNS and complete XHTTP settings. Returning the original config is
+    the only lossless representation supported by INCY.
+    """
+
+    configs = []
+    for item in items or []:
+        if isinstance(item, dict):
+            raw_link = str(item.get("raw_link") or "").strip()
+            display_name = str(
+                item.get("display_name") or item.get("original_name") or ""
+            ).strip()
+        else:
+            raw_link = str(item or "").strip()
+            display_name = ""
+        if not raw_link:
+            continue
+
+        parsed_configs = []
+        if raw_link.startswith(("{", "[")):
+            try:
+                document = json.loads(raw_link)
+            except json.JSONDecodeError:
+                continue
+            parsed_configs = document if isinstance(document, list) else [document]
+        elif raw_link.startswith("vless://"):
+            converted = vless_to_outbound(raw_link)
+            if converted:
+                parsed_configs = [converted]
+
+        valid_configs = [config for config in parsed_configs if isinstance(config, dict)]
+        for index, config in enumerate(valid_configs, start=1):
+            # json.loads already made a new object, so stored source data is
+            # never mutated. Preserve all nested Xray fields byte-for-field.
+            if display_name:
+                config["remarks"] = (
+                    display_name if len(valid_configs) == 1 else f"{display_name} · {index}"
+                )
+            configs.append(config)
+
+    return configs
 
 
 def incy_whitelist_routing_link():
@@ -613,6 +671,43 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             if meta.get("active") is False:
                 send_disabled_subscription(self, meta)
                 return
+
+            if is_incy_integrated_request(self):
+                try:
+                    request = urllib.request.Request(
+                        "http://127.0.0.1:8001/api/internal/integrated_nodes",
+                        headers={"User-Agent": "HamaliVPN-Injector"},
+                    )
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        payload = json.loads(response.read().decode("utf-8"))
+                    items = payload.get("items") or [
+                        {"raw_link": link} for link in payload.get("nodes", [])
+                    ]
+                    configs = incy_integrated_configs(items)
+                    body = json.dumps(
+                        configs, ensure_ascii=False, separators=(",", ":")
+                    ).encode("utf-8")
+                except Exception as exc:
+                    print("Error building Incy integrated subscription:", exc, file=sys.stderr)
+                    self.send_response(502)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Content-Length", "2")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.wfile.write(b"[]")
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                send_profile_headers(self, meta)
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+
             target_token = requested_token
             if meta:
                 target_token = meta.get("target_token") or requested_token
@@ -1470,7 +1565,12 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     print("Error fetching integrated nodes:", e)
 
                                 if is_incy_request(self):
-                                    integrated_links = incy_integrated_links(integrated_items)
+                                    # Full JSON profiles are delivered losslessly by the
+                                    # dedicated Incy integration subscription. Keep only
+                                    # already-native links here to avoid broken duplicates.
+                                    integrated_links = incy_integrated_links(
+                                        integrated_items, include_json=False
+                                    )
 
                                 all_links = (
                                     smart_links

@@ -1,11 +1,5 @@
 FROM node:22-slim AS node-builder
 
-WORKDIR /portal
-COPY portal-webapp/package.json portal-webapp/package-lock.json ./
-RUN npm ci
-COPY portal-webapp/ ./
-RUN npm run build
-
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
@@ -31,7 +25,10 @@ COPY --from=node-builder /app/node_modules ./node_modules
 
 COPY src ./src
 COPY migrations ./migrations
-COPY --from=node-builder /portal/dist ./portal-webapp/dist
+# The maintained partner portal is the proven no-build SPA with the complete
+# reseller/admin workflow. Keep its runtime copy explicit so an experimental
+# frontend build cannot silently replace production again.
+COPY src/hamalivpn/portal_web ./portal-webapp/dist
 RUN pip install --upgrade pip && pip install .
 
 RUN mkdir -p /app/data && chown -R hamali:hamali /app

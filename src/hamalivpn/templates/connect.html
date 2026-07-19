@@ -437,7 +437,19 @@ summary::-webkit-details-marker { display: none; }
       </div>
       <div class="happ-info">
         <b>Подключить в Incy</b>
-        <small>Отдельный профиль с VLESS и Hysteria2</small>
+        <small>Основные серверы VLESS и Hysteria2</small>
+      </div>
+    </a>
+    {% endif %}
+
+    {% if incy_integrated_link %}
+    <a class="happ-btn cv2-import-action" href="{{ incy_integrated_link }}" style="background: linear-gradient(135deg, #156f86, #4c55bd); margin-top: 12px;">
+      <div class="happ-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h8"/><path d="M12 8v8"/><rect x="3" y="3" width="18" height="18" rx="4"/></svg>
+      </div>
+      <div class="happ-info">
+        <b>Интегрированные ноды в Incy</b>
+        <small>Полные Xray-профили · обновляются автоматически</small>
       </div>
     </a>
     {% endif %}
@@ -462,6 +474,11 @@ summary::-webkit-details-marker { display: none; }
         <div class="copy-row">
           <input id="incy-sub-url" class="copy-input" readonly value="{{ incy_subscription_url }}">
           <button class="btn-secondary cv2-copy-btn" data-copy="#incy-sub-url">Копировать</button>
+        </div>
+        <p style="font-size:13px; color:var(--text-secondary); margin:16px 0 8px;">Полные интегрированные профили для Incy</p>
+        <div class="copy-row">
+          <input id="incy-integrated-sub-url" class="copy-input" readonly value="{{ incy_integrated_subscription_url }}">
+          <button class="btn-secondary cv2-copy-btn" data-copy="#incy-integrated-sub-url">Копировать</button>
         </div>
         {% else %}
         <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">

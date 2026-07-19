@@ -7,8 +7,10 @@ from hamalivpn.sub_injector import (
     STANDALONE_CLUSTER_TAGS,
     extract_subscription_token,
     incy_compatible_link,
+    incy_integrated_configs,
     incy_integrated_links,
     incy_whitelist_routing_link,
+    is_incy_integrated_request,
     is_incy_request,
     reality_share_link,
     remnawave_subscription_path,
@@ -155,12 +157,59 @@ def test_incy_integrated_links_deduplicate_connections_and_normalize_hysteria() 
     assert "insecure=1" in links[1]
 
 
+def test_incy_main_profile_skips_full_integrated_json() -> None:
+    items = [
+        {"raw_link": json.dumps({"remarks": "Full", "outbounds": []})},
+        {"raw_link": "vless://uuid@example.com:443?security=reality&type=tcp#Native"},
+    ]
+
+    assert incy_integrated_links(items, include_json=False) == [items[1]["raw_link"]]
+
+
+def test_incy_integrated_subscription_preserves_full_xray_config() -> None:
+    source = {
+        "remarks": "Provider",
+        "dns": {"servers": ["https://dns.example/dns-query"]},
+        "routing": {"rules": [{"outboundTag": "youtube", "domain": ["youtube.com"]}]},
+        "outbounds": [
+            {
+                "protocol": "vless",
+                "tag": "proxy",
+                "streamSettings": {
+                    "network": "xhttp",
+                    "xhttpSettings": {
+                        "path": "/tunnel",
+                        "extra": {"xmux": {"maxConcurrency": "8-16"}},
+                    },
+                },
+            },
+            {"protocol": "vless", "tag": "youtube"},
+        ],
+    }
+    original = json.loads(json.dumps(source))
+
+    configs = incy_integrated_configs(
+        [{"raw_link": json.dumps(source), "display_name": "Франция · интеграция"}]
+    )
+
+    assert len(configs) == 1
+    assert configs[0]["remarks"] == "Франция · интеграция"
+    assert configs[0]["dns"] == source["dns"]
+    assert configs[0]["routing"] == source["routing"]
+    assert configs[0]["outbounds"] == source["outbounds"]
+    assert source == original
+
+
 def test_incy_request_is_detected_by_query_and_official_headers() -> None:
     class Handler:
         path = "/token?client=incy"
         headers = {}
 
     assert is_incy_request(Handler())
+
+    Handler.path = "/token?client=incy-integrated"
+    assert is_incy_request(Handler())
+    assert is_incy_integrated_request(Handler())
 
     Handler.path = "/token"
     Handler.headers = {"User-Agent": "INCY/1.2/iOS", "x-client": "INCY"}

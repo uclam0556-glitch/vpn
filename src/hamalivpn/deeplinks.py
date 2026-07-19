@@ -52,7 +52,17 @@ def incy_subscription_url(subscription_url: str) -> str:
     return with_query_parameter(subscription_url, "client", "incy") if subscription_url else ""
 
 
-def incy_deeplink(subscription_url: str, name: str = "HamaliVPN") -> str:
+def incy_integrated_subscription_url(subscription_url: str) -> str:
+    """Full-config subscription for third-party profiles imported through the bot."""
+
+    return (
+        with_query_parameter(subscription_url, "client", "incy-integrated")
+        if subscription_url
+        else ""
+    )
+
+
+def _incy_deeplink_for_url(subscription_url: str, name: str) -> str:
     """INCY encrypted import link.
 
     INCY does not use a plain `incy://add/<url>` scheme. Its public encoder
@@ -70,7 +80,6 @@ def incy_deeplink(subscription_url: str, name: str = "HamaliVPN") -> str:
     if not node_bin:
         return ""
 
-    dedicated_url = incy_subscription_url(subscription_url)
     script = """
 const { encryptLink } = require('@incy/link-encoder');
 const payload = JSON.parse(process.argv[1]);
@@ -79,7 +88,7 @@ process.stdout.write(encryptLink(payload.url, { name: payload.name || 'HamaliVPN
 
     try:
         result = subprocess.run(
-            [node_bin, "-e", script, json.dumps({"url": dedicated_url, "name": name})],
+            [node_bin, "-e", script, json.dumps({"url": subscription_url, "name": name})],
             check=True,
             capture_output=True,
             text=True,
@@ -91,3 +100,17 @@ process.stdout.write(encryptLink(payload.url, { name: payload.name || 'HamaliVPN
 
     link = result.stdout.strip()
     return link if link.startswith("incy://crypt1/") else ""
+
+
+def incy_deeplink(subscription_url: str, name: str = "HamaliVPN") -> str:
+    """INCY encrypted import link for native HamaliVPN servers."""
+
+    return _incy_deeplink_for_url(incy_subscription_url(subscription_url), name)
+
+
+def incy_integrated_deeplink(
+    subscription_url: str, name: str = "HamaliVPN · Интеграции"
+) -> str:
+    """INCY encrypted import link preserving complete third-party Xray configs."""
+
+    return _incy_deeplink_for_url(incy_integrated_subscription_url(subscription_url), name)

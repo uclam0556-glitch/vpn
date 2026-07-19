@@ -428,6 +428,8 @@ from .deeplinks import (
     happ_deeplink,
     hiddify_deeplink,
     incy_deeplink,
+    incy_integrated_deeplink,
+    incy_integrated_subscription_url,
     incy_subscription_url,
     streisand_deeplink,
     v2raytun_deeplink,
@@ -763,7 +765,7 @@ async def get_all_resellers(
     resellers = (
         (
             await db.execute(
-                select(Customer).filter(Customer.role.in_(["reseller", "admin", "super_admin"]))
+                select(Customer).filter(Customer.role == "reseller")
             )
         )
         .scalars()
@@ -938,6 +940,75 @@ async def create_reseller(
     }
 
 
+class CreateSubadminRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    telegram_id: int | None = None
+
+
+def _subadmin_payload(customer: Customer) -> dict:
+    return {
+        "id": customer.id,
+        "telegram_id": customer.telegram_id,
+        "name": customer.full_name,
+        "is_blocked": customer.is_blocked,
+        "portal_access_key": customer.portal_access_key,
+        "role": customer.role,
+    }
+
+
+@app.get("/api/admin/subadmins")
+async def get_subadmins(
+    user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)
+):
+    await _admin_or_403(user, db)
+    subadmins = (
+        (await db.execute(select(Customer).where(Customer.role == "admin").order_by(Customer.id)))
+        .scalars()
+        .all()
+    )
+    return [_subadmin_payload(customer) for customer in subadmins]
+
+
+@app.post("/api/admin/subadmins")
+async def create_subadmin(
+    req: CreateSubadminRequest,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    admin = await _admin_or_403(user, db)
+    customer = None
+    if req.telegram_id is not None:
+        customer = (
+            (await db.execute(select(Customer).where(Customer.telegram_id == req.telegram_id)))
+            .scalars()
+            .first()
+        )
+    if customer and customer.role == "super_admin":
+        raise HTTPException(409, "Нельзя изменить роль главного администратора")
+
+    if customer is None:
+        synthetic_id = req.telegram_id or int(secrets.token_hex(6), 16)
+        customer = Customer(telegram_id=synthetic_id, full_name=req.name.strip())
+        db.add(customer)
+    else:
+        customer.full_name = req.name.strip()
+
+    customer.role = "admin"
+    customer.is_blocked = False
+    customer.portal_access_key = secrets.token_urlsafe(32)
+    await db.flush()
+    await _audit(
+        db,
+        admin,
+        "admin.subadmin.created",
+        "customer",
+        customer.id,
+        {"name": customer.full_name, "telegram_id": customer.telegram_id},
+    )
+    await db.commit()
+    return {"status": "ok", **_subadmin_payload(customer)}
+
+
 # ── Admin: полное управление из панели ───────────────────────────────────────
 
 
@@ -957,7 +1028,7 @@ async def admin_dashboard(
         await db.execute(
             select(func.count())
             .select_from(Customer)
-            .where(Customer.role.in_(["reseller", "admin", "super_admin"]))
+            .where(Customer.role == "reseller")
         )
     ).scalar() or 0
     clients = (
@@ -2172,6 +2243,7 @@ def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
             "v2raytun_link": _connect_import_path(access_token, "v2raytun"),
             "happ_link": _connect_import_path(access_token, "happ"),
             "incy_link": _connect_import_path(access_token, "incy"),
+            "incy_integrated_link": _connect_import_path(access_token, "incy-integrated"),
             "streisand_link": _connect_import_path(access_token, "streisand"),
             "manual_link": _connect_import_path(access_token, "manual"),
         }
@@ -2180,6 +2252,7 @@ def _connect_links(access_token: str, subscription_url: str) -> dict[str, str]:
         "v2raytun_link": v2raytun_deeplink(subscription_url),
         "happ_link": happ_deeplink(subscription_url),
         "incy_link": incy_deeplink(subscription_url, settings.subscription_name),
+        "incy_integrated_link": incy_integrated_deeplink(subscription_url),
         "streisand_link": streisand_deeplink(subscription_url),
         "manual_link": "",
     }
@@ -2254,6 +2327,9 @@ def _connect_template_response(
             "subscription": subscription,
             "subscription_url": subscription_url,
             "incy_subscription_url": incy_subscription_url(subscription_url),
+            "incy_integrated_subscription_url": incy_integrated_subscription_url(
+                subscription_url
+            ),
             "qr": qr_data_uri(subscription_url) if subscription_url else None,
             **links,
             "expired": expired,
@@ -2332,6 +2408,7 @@ async def public_connect_import(
         "v2raytun": links["v2raytun_link"],
         "happ": links["happ_link"],
         "incy": links["incy_link"],
+        "incy-integrated": links["incy_integrated_link"],
         "streisand": links["streisand_link"],
     }.get(client, "")
 
