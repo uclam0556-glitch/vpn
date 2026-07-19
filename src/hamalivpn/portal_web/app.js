@@ -612,17 +612,22 @@ function subadminRow(item) {
 function openCreateSubadminModal() {
   modal(`
     <h3>Новый субадмин</h3>
-    <p class="sub">Будет создан отдельный ключ входа. Полномочия главного администратора не передаются.</p>
+    <p class="sub">Создайте понятный ключ входа или оставьте поле пустым — тогда система выпустит защищённый случайный ключ.</p>
     <div class="field"><label>Имя *</label><input class="input" id="saName" placeholder="Имя оператора" /></div>
     <div class="field"><label>Telegram ID (необязательно)</label><input class="input" id="saTg" type="number" placeholder="если знаете — привяжем" /></div>
+    <div class="field"><label>Свой ключ доступа (необязательно)</label>
+      <input class="input" id="saKey" maxlength="64" autocomplete="off" spellcheck="false" placeholder="например: support-team" />
+      <div class="muted" style="font-size:12px;margin-top:7px">От 6 до 64 символов: латинские буквы, цифры, точка, дефис и подчёркивание.</div></div>
     <div class="modal__actions"><button class="btn btn--ghost" data-action="close">Отмена</button><button class="btn btn--primary" id="saSave">Создать</button></div>`);
   document.getElementById("saSave").addEventListener("click", async () => {
     const name = document.getElementById("saName").value.trim();
     const telegramId = document.getElementById("saTg").value.trim();
+    const customKey = document.getElementById("saKey").value.trim();
     if (!name) return toast("Укажите имя", "err");
+    if (customKey && customKey.length < 6) return toast("Ключ минимум 6 символов", "err");
     try {
       const result = await api("/admin/subadmins", { method: "POST", body: {
-        name, telegram_id: telegramId ? Number(telegramId) : null,
+        name, telegram_id: telegramId ? Number(telegramId) : null, key: customKey || null,
       }});
       renderTab();
       modal(`<h3>Субадмин создан</h3><p class="sub">Передайте этот ключ сотруднику. Позже его можно безопасно заменить.</p>
@@ -636,15 +641,28 @@ function openSubadminManageModal(item) {
   modal(`<h3>${esc(item.name || "Субадмин")}</h3>
     <p class="sub">ID ${item.id} · tg ${(item.telegram_id != null ? item.telegram_id : "—")}</p>
     <div class="field"><label>Ключ доступа</label><div class="codebox">${esc(item.portal_access_key || "не задан")}</div></div>
-    <div class="modal__actions">${item.portal_access_key ? `<button class="btn" data-copy="${esc(item.portal_access_key)}">Скопировать</button>` : ""}<button class="btn" id="saRotate">Заменить ключ</button></div>
+    <div class="modal__actions">${item.portal_access_key ? `<button class="btn" data-copy="${esc(item.portal_access_key)}">Скопировать</button>` : ""}<button class="btn" id="saRotate">Случайный ключ</button></div>
+    <div class="field" style="margin-top:12px"><label>Задать свой ключ</label>
+      <input class="input" id="saCustomKey" maxlength="64" autocomplete="off" spellcheck="false" placeholder="например: support-team" />
+      <div class="muted" style="font-size:12px;margin-top:7px">Старый ключ перестанет работать сразу после сохранения.</div></div>
+    <div class="modal__actions"><button class="btn btn--primary" id="saSetKey">Сохранить свой ключ</button></div>
     <div class="modal__actions"><button class="btn btn--danger" id="saBlock">${item.is_blocked ? "Разблокировать" : "Заблокировать"}</button><button class="btn btn--ghost" data-action="close">Закрыть</button></div>`);
-  document.getElementById("saRotate").addEventListener("click", async () => {
-    if (!confirm("Заменить ключ? Старый ключ сразу перестанет работать.")) return;
+  async function applySubadminKey(key) {
     try {
-      const result = await api(`/admin/resellers/${item.id}/key`, { method: "POST", body: { key: null } });
+      const result = await api(`/admin/resellers/${item.id}/key`, { method: "POST", body: { key } });
       renderTab();
-      modal(`<h3>Ключ заменён</h3><div class="codebox">${esc(result.portal_access_key)}</div><div class="modal__actions"><button class="btn btn--primary" data-copy="${esc(result.portal_access_key)}">Скопировать</button><button class="btn btn--ghost" data-action="close">Готово</button></div>`);
+      modal(`<h3>Ключ обновлён</h3><p class="sub">Передайте новый ключ субадмину. Старый ключ больше не работает.</p><div class="codebox">${esc(result.portal_access_key)}</div><div class="modal__actions"><button class="btn btn--primary" data-copy="${esc(result.portal_access_key)}">Скопировать ключ</button><button class="btn btn--ghost" data-action="close">Готово</button></div>`);
     } catch (err) { toast(err.message, "err"); }
+  }
+  document.getElementById("saRotate").addEventListener("click", async () => {
+    if (!confirm("Создать новый случайный ключ? Старый ключ сразу перестанет работать.")) return;
+    applySubadminKey(null);
+  });
+  document.getElementById("saSetKey").addEventListener("click", () => {
+    const key = document.getElementById("saCustomKey").value.trim();
+    if (key.length < 6) return toast("Ключ минимум 6 символов", "err");
+    if (!confirm("Сохранить новый ключ? Старый ключ сразу перестанет работать.")) return;
+    applySubadminKey(key);
   });
   document.getElementById("saBlock").addEventListener("click", async () => {
     try {

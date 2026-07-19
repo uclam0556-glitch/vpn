@@ -4,6 +4,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from urllib.parse import parse_qsl
@@ -187,7 +188,39 @@ async def get_portal_user(
 
 
 class SetKeyRequest(BaseModel):
-    key: str | None = None
+    key: str | None = Field(default=None, max_length=64)
+
+
+_PORTAL_ACCESS_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+async def _portal_access_key(
+    db: AsyncSession,
+    requested_key: str | None,
+    *,
+    current_customer_id: int | None = None,
+) -> tuple[str, bool]:
+    """Return a safe unique portal key, or generate one when left blank."""
+
+    custom = (requested_key or "").strip()
+    if not custom:
+        return secrets.token_urlsafe(32), False
+    if len(custom) < 6:
+        raise HTTPException(400, "Ключ слишком короткий (минимум 6 символов)")
+    if not _PORTAL_ACCESS_KEY_RE.fullmatch(custom):
+        raise HTTPException(
+            400,
+            "Используйте только латинские буквы, цифры, точку, дефис и подчёркивание",
+        )
+
+    clash = (
+        (await db.execute(select(Customer).filter_by(portal_access_key=custom)))
+        .scalars()
+        .first()
+    )
+    if clash and clash.id != current_customer_id:
+        raise HTTPException(409, "Такой ключ уже используется другим пользователем")
+    return custom, True
 
 
 @app.post("/api/admin/resellers/{reseller_id}/key")
@@ -206,20 +239,9 @@ async def generate_reseller_key(
     if not reseller:
         raise HTTPException(404, "Reseller not found")
 
-    custom = (req.key or "").strip()
-    if custom:
-        if len(custom) < 6:
-            raise HTTPException(400, "Ключ слишком короткий (минимум 6 символов)")
-        clash = (
-            (await db.execute(select(Customer).filter_by(portal_access_key=custom)))
-            .scalars()
-            .first()
-        )
-        if clash and clash.id != reseller.id:
-            raise HTTPException(409, "Такой ключ уже используется другим пользователем")
-        new_key = custom
-    else:
-        new_key = secrets.token_urlsafe(32)
+    new_key, is_custom = await _portal_access_key(
+        db, req.key, current_customer_id=reseller.id
+    )
 
     reseller.portal_access_key = new_key
     await _audit(
@@ -228,7 +250,7 @@ async def generate_reseller_key(
         "admin.reseller.key.updated",
         "customer",
         reseller.id,
-        {"reseller_name": reseller.full_name, "custom_key": bool(custom)},
+        {"reseller_name": reseller.full_name, "custom_key": is_custom},
     )
     await db.commit()
     return {"status": "ok", "portal_access_key": new_key}
@@ -943,6 +965,7 @@ async def create_reseller(
 class CreateSubadminRequest(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     telegram_id: int | None = None
+    key: str | None = Field(default=None, max_length=64)
 
 
 def _subadmin_payload(customer: Customer) -> dict:
@@ -993,9 +1016,14 @@ async def create_subadmin(
     else:
         customer.full_name = req.name.strip()
 
+    new_key, is_custom = await _portal_access_key(
+        db,
+        req.key,
+        current_customer_id=customer.id if customer.id else None,
+    )
     customer.role = "admin"
     customer.is_blocked = False
-    customer.portal_access_key = secrets.token_urlsafe(32)
+    customer.portal_access_key = new_key
     await db.flush()
     await _audit(
         db,
@@ -1003,7 +1031,11 @@ async def create_subadmin(
         "admin.subadmin.created",
         "customer",
         customer.id,
-        {"name": customer.full_name, "telegram_id": customer.telegram_id},
+        {
+            "name": customer.full_name,
+            "telegram_id": customer.telegram_id,
+            "custom_key": is_custom,
+        },
     )
     await db.commit()
     return {"status": "ok", **_subadmin_payload(customer)}

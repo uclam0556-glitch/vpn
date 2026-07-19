@@ -101,3 +101,47 @@ async def test_super_admin_can_create_and_list_separate_subadmins(session_factor
     assert [item["name"] for item in listed.json()] == ["Support Operator"]
     assert resellers.status_code == 200
     assert resellers.json() == []
+
+
+@pytest.mark.asyncio
+async def test_super_admin_can_choose_and_replace_subadmin_key(session_factory) -> None:
+    async with session_factory() as session:
+        session.add(Customer(telegram_id=5392719643, full_name="Owner", role="super_admin"))
+        await session.commit()
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        async with session_factory() as session:
+            yield session
+
+    async def override_user() -> dict[str, int]:
+        return {"id": 5392719643}
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_portal_user] = override_user
+    try:
+        client = TestClient(app)
+        created = client.post(
+            "/api/admin/subadmins",
+            json={"name": "Support", "telegram_id": 900010, "key": "support-team"},
+        )
+        duplicate = client.post(
+            "/api/admin/subadmins",
+            json={"name": "Second", "telegram_id": 900011, "key": "support-team"},
+        )
+        invalid = client.post(
+            "/api/admin/subadmins",
+            json={"name": "Third", "telegram_id": 900012, "key": "ключ с пробелами"},
+        )
+        replaced = client.post(
+            f"/api/admin/resellers/{created.json()['id']}/key",
+            json={"key": "support-night"},
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert created.status_code == 200
+    assert created.json()["portal_access_key"] == "support-team"
+    assert duplicate.status_code == 409
+    assert invalid.status_code == 400
+    assert replaced.status_code == 200
+    assert replaced.json()["portal_access_key"] == "support-night"
