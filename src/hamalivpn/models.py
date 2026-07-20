@@ -250,3 +250,27 @@ class IntegrationNode(Base):
     )
 
     link: Mapped[IntegrationLink] = relationship(back_populates="nodes")
+
+
+class FeatureFlag(Base):
+    """Runtime switch for gradual, deterministic application rollouts.
+
+    Flags are deliberately application-level: the current production path stays
+    unchanged until a flag is explicitly enabled and its rollout percentage is
+    raised above zero.
+    """
+
+    __tablename__ = "feature_flags"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    description: Mapped[str] = mapped_column(String(255), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    rollout_percent: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    updated_by: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, server_default=func.now()
+    )

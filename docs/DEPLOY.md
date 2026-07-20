@@ -143,8 +143,9 @@ docker exec remnawave-db \
   | gzip > /opt/hamalivpn/backups/remnawave-$(date +%F).sql.gz
 ```
 
-Копии необходимо отправлять offsite; резерв на том же VPS не защищает от
-потери сервера.
+Для зашифрованных offsite-копий, автоматической checksum-проверки, регулярного
+restore drill, внешнего uptime-мониторинга и canary-релизов используйте
+`docs/OPERATIONS_PLATFORM.md`.
 
 ## 7. Тестовые VPN-ноды
 

@@ -110,3 +110,58 @@ async def test_not_found_has_a_specific_error() -> None:
 
     with pytest.raises(RemnawaveNotFoundError):
         await client.disable_user("1e74ddcf-80c0-45ce-96ee-0338cab97b75")
+
+
+@pytest.mark.asyncio
+async def test_node_summary_exposes_metrics_without_configuration_secrets() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/nodes"
+        return httpx.Response(
+            200,
+            json={
+                "response": [
+                    {
+                        "name": "France",
+                        "countryCode": "FR",
+                        "isConnected": True,
+                        "isDisabled": False,
+                        "usersOnline": 4,
+                        "trafficUsedBytes": 2048,
+                        "configProfile": {"privateKey": "must-not-leak"},
+                        "system": {
+                            "info": {"cpus": 4, "memoryTotal": 1000},
+                            "stats": {
+                                "memoryUsed": 250,
+                                "loadAvg": [0.4, 0.2, 0.1],
+                                "interface": {"rxBytesPerSec": 125000, "txBytesPerSec": 62500},
+                            },
+                        },
+                    }
+                ]
+            },
+        )
+
+    settings = Settings(
+        panel_base_url="https://panel.example",
+        remnawave_api_token="api-token",
+        remnawave_mock=False,
+    )
+    client = RemnawaveClient(settings, transport=httpx.MockTransport(handler))
+    rows = await client.list_nodes_summary()
+
+    assert rows == [
+        {
+            "name": "France",
+            "country_code": "FR",
+            "connected": True,
+            "disabled": False,
+            "users_online": 4,
+            "traffic_used_bytes": 2048,
+            "rx_mbps": 1.0,
+            "tx_mbps": 0.5,
+            "cpu_percent": 10.0,
+            "memory_percent": 25.0,
+            "updated_at": None,
+        }
+    ]
+    assert "private" not in json.dumps(rows).lower()

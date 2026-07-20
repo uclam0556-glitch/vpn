@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly HamaliVPN backup restore drill
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=hamali-restore-drill.service
+
+[Install]
+WantedBy=timers.target

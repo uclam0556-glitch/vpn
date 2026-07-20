@@ -9,21 +9,23 @@ import secrets
 import time
 from urllib.parse import parse_qsl
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import get_settings
 from .db import get_session
 from .models import Customer, PaymentStatus, PaymentTransaction
+from .portal_security import SESSION_COOKIE, PortalSecurityStore
 from .tma_api import tma_router
 
 settings = get_settings()
+portal_security = PortalSecurityStore(settings)
 _docs_enabled = settings.debug and not settings.is_production
 
 app = FastAPI(
@@ -128,12 +130,7 @@ def validate_telegram_data(init_data: str) -> dict:
 
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-security = HTTPBearer()
-
-# In-memory brute-force throttle for portal-key auth (single uvicorn process).
-_AUTH_FAILS: dict[str, tuple[int, float]] = {}
-_AUTH_MAX_FAILS = 15
-_AUTH_WINDOW = 300.0
+security = HTTPBearer(auto_error=False)
 
 
 def _client_ip(request: Request) -> str:
@@ -144,38 +141,39 @@ def _client_ip(request: Request) -> str:
     )
 
 
-def _auth_allowed(ip: str) -> bool:
-    count, first = _AUTH_FAILS.get(ip, (0, time.time()))
-    if time.time() - first > _AUTH_WINDOW:
-        return True
-    return count < _AUTH_MAX_FAILS
-
-
-def _auth_record_fail(ip: str) -> None:
-    now = time.time()
-    count, first = _AUTH_FAILS.get(ip, (0, now))
-    if now - first > _AUTH_WINDOW:
-        count, first = 0, now
-    _AUTH_FAILS[ip] = (count + 1, first)
-
-
 async def get_portal_user(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
     db: AsyncSession = Depends(get_session),
 ):
     ip = _client_ip(request)
-    if not _auth_allowed(ip):
-        raise HTTPException(status_code=429, detail="Слишком много попыток. Попробуйте позже.")
-    key = credentials.credentials
-    customer = (
-        (await db.execute(select(Customer).filter_by(portal_access_key=key))).scalars().first()
-    )
-    if not customer or not key:
-        _auth_record_fail(ip)
-        raise HTTPException(status_code=401, detail="Invalid access key")
+    session_token = request.cookies.get(SESSION_COOKIE, "")
+    session_data = await portal_security.get_session(session_token)
+    customer = await db.get(Customer, session_data["customer_id"]) if session_data else None
+
+    if customer is None and settings.portal_legacy_bearer_enabled:
+        key = credentials.credentials if credentials else ""
+        if key:
+            attempt = await portal_security.rate_limit(
+                "legacy", ip, limit=settings.portal_auth_attempts, window=settings.portal_auth_window_seconds
+            )
+            if not attempt.allowed:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Слишком много попыток. Попробуйте позже.",
+                    headers={"Retry-After": str(attempt.retry_after)},
+                )
+            customer = (
+                (await db.execute(select(Customer).filter_by(portal_access_key=key)))
+                .scalars()
+                .first()
+            )
+            if customer:
+                await portal_security.clear_rate_limit("legacy", ip)
+
+    if not customer:
+        raise HTTPException(status_code=401, detail="Invalid or expired portal session")
     if customer.is_blocked and customer.role != "super_admin":
-        _auth_record_fail(ip)
         raise HTTPException(
             status_code=403, detail="Доступ заблокирован. Обратитесь к администратору."
         )
@@ -185,6 +183,74 @@ async def get_portal_user(
         "role": customer.role,
         "is_blocked": customer.is_blocked,
     }
+
+
+class PortalLoginRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=128)
+
+
+def _portal_identity(customer: Customer) -> dict:
+    return {
+        "role": customer.role,
+        "name": customer.full_name,
+        "level": customer.reseller_level,
+        "is_blocked": customer.is_blocked,
+    }
+
+
+@app.post("/api/portal/session")
+async def create_portal_session(
+    req: PortalLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_session),
+):
+    ip = _client_ip(request)
+    attempt = await portal_security.rate_limit(
+        "login", ip, limit=settings.portal_auth_attempts, window=settings.portal_auth_window_seconds
+    )
+    if not attempt.allowed:
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много попыток. Попробуйте позже.",
+            headers={"Retry-After": str(attempt.retry_after)},
+        )
+
+    key = req.key.strip()
+    customer = (
+        (await db.execute(select(Customer).where(Customer.portal_access_key == key)))
+        .scalars()
+        .first()
+        if key
+        else None
+    )
+    if not customer or (customer.is_blocked and customer.role != "super_admin"):
+        raise HTTPException(status_code=401, detail="Неверный ключ доступа")
+
+    token, ttl = await portal_security.create_session(customer.id, customer.role)
+    await portal_security.clear_rate_limit("login", ip)
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=ttl,
+        httponly=True,
+        secure=settings.secure_cookies or settings.is_production,
+        samesite="strict",
+        path="/",
+    )
+    return {**_portal_identity(customer), "expires_in": ttl}
+
+
+@app.delete("/api/portal/session")
+async def delete_portal_session(request: Request, response: Response) -> dict[str, str]:
+    await portal_security.revoke_session(request.cookies.get(SESSION_COOKIE, ""))
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        secure=settings.secure_cookies or settings.is_production,
+        samesite="strict",
+    )
+    return {"status": "ok"}
 
 
 class SetKeyRequest(BaseModel):
@@ -244,6 +310,7 @@ async def generate_reseller_key(
     )
 
     reseller.portal_access_key = new_key
+    await portal_security.revoke_customer_sessions(reseller.id)
     await _audit(
         db,
         customer,
@@ -467,9 +534,11 @@ from .device_slots import (
     ensure_device_slot,
     sync_subscription_device_slots,
 )
+from .feature_flags import FLAG_DEFINITIONS, feature_enabled, feature_flag_rows
 from .models import (
     AuditLog,
     BalanceTransaction,
+    FeatureFlag,
     Subscription,
     SubscriptionDevice,
     SubscriptionStatus,
@@ -477,6 +546,7 @@ from .models import (
     as_utc,
     utcnow,
 )
+from .operations import operations_dashboard
 from .qr import qr_data_uri
 from .remnawave import RemnawaveNotFoundError, make_remnawave_gateway
 from .services import (
@@ -560,12 +630,7 @@ async def get_portal_me(
     user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)
 ):
     customer = await _portal_customer(user, db)
-    return {
-        "role": customer.role,
-        "name": customer.full_name,
-        "level": customer.reseller_level,
-        "is_blocked": customer.is_blocked,
-    }
+    return _portal_identity(customer)
 
 
 @app.get("/api/reseller/dashboard")
@@ -941,6 +1006,8 @@ async def create_reseller(
     customer.role = "reseller"
     customer.reseller_level = req.level or 1
     customer.portal_access_key = new_key
+    if customer.id:
+        await portal_security.revoke_customer_sessions(customer.id)
     await _audit(
         db,
         admin,
@@ -1025,6 +1092,7 @@ async def create_subadmin(
     customer.is_blocked = False
     customer.portal_access_key = new_key
     await db.flush()
+    await portal_security.revoke_customer_sessions(customer.id)
     await _audit(
         db,
         admin,
@@ -1056,67 +1124,103 @@ async def admin_dashboard(
     user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)
 ):
     await _admin_or_403(user, db)
-    resellers = (
-        await db.execute(
-            select(func.count())
-            .select_from(Customer)
-            .where(Customer.role == "reseller")
-        )
-    ).scalar() or 0
-    clients = (
-        await db.execute(
-            select(func.count()).select_from(Customer).where(Customer.referrer_id.is_not(None))
-        )
-    ).scalar() or 0
-    active_subs = (
-        await db.execute(
-            select(func.count())
-            .select_from(Subscription)
-            .where(Subscription.status == SubscriptionStatus.active)
-        )
-    ).scalar() or 0
-    revenue = (
-        await db.execute(
-            select(func.coalesce(func.sum(PaymentTransaction.amount), 0)).where(
-                PaymentTransaction.status == PaymentStatus.paid
-            )
-        )
-    ).scalar() or 0
-    reseller_balance = (
-        await db.execute(
-            select(func.coalesce(func.sum(Customer.balance_rub), 0)).where(
-                Customer.role.in_(["reseller", "admin", "super_admin"])
-            )
-        )
-    ).scalar() or 0
-    recent = (
+    gateway = make_remnawave_gateway(get_settings())
+    return await operations_dashboard(db, gateway)
+
+
+@app.get("/api/admin/referrals")
+async def admin_referrals(
+    user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)
+):
+    await _admin_or_403(user, db)
+    rows = (
         (
             await db.execute(
-                select(PaymentTransaction)
-                .where(PaymentTransaction.status == PaymentStatus.paid)
-                .order_by(desc(PaymentTransaction.created_at))
-                .limit(8)
+                select(Customer)
+                .options(selectinload(Customer.referrals))
+                .where(or_(Customer.referrals.any(), Customer.balance_rub > 0))
+                .order_by(desc(Customer.balance_rub), Customer.id)
             )
         )
         .scalars()
         .all()
     )
-    return {
-        "resellers": resellers,
-        "clients": clients,
-        "active_subs": active_subs,
-        "revenue_rub": int(revenue),
-        "reseller_balance_rub": int(reseller_balance),
-        "recent_payments": [
-            {
-                "amount": t.amount,
-                "provider": t.provider,
-                "payload": t.payload,
-                "date": t.created_at.isoformat() if t.created_at else None,
-            }
-            for t in recent
-        ],
+    return [
+        {
+            "id": row.id,
+            "telegram_id": row.telegram_id,
+            "full_name": row.full_name,
+            "username": row.telegram_username,
+            "balance_rub": row.balance_rub,
+            "referrals_count": len(row.referrals),
+        }
+        for row in rows
+    ]
+
+
+class FeatureFlagUpdate(BaseModel):
+    enabled: bool
+    rollout_percent: int = Field(ge=0, le=100)
+    allow_subjects: list[str] = Field(default_factory=list, max_length=100)
+
+
+@app.get("/api/admin/feature-flags")
+async def admin_feature_flags(
+    user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)
+):
+    await _admin_or_403(user, db)
+    return await feature_flag_rows(db)
+
+
+@app.put("/api/admin/feature-flags/{flag_key}")
+async def admin_update_feature_flag(
+    flag_key: str,
+    req: FeatureFlagUpdate,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    admin = await _admin_or_403(user, db)
+    definitions = {definition.key: definition for definition in FLAG_DEFINITIONS}
+    definition = definitions.get(flag_key)
+    if not definition:
+        raise HTTPException(404, "Unknown feature flag")
+    allow_subjects = sorted({item.strip() for item in req.allow_subjects if item.strip()})
+    flag = await db.get(FeatureFlag, flag_key)
+    if flag is None:
+        flag = FeatureFlag(key=flag_key, description=definition.description)
+        db.add(flag)
+    before = {
+        "enabled": bool(flag.enabled),
+        "rollout_percent": int(flag.rollout_percent or 0),
     }
+    flag.description = definition.description
+    flag.enabled = req.enabled
+    flag.rollout_percent = req.rollout_percent
+    flag.config = {"allow_subjects": allow_subjects}
+    flag.updated_by = _actor(admin)
+    await _audit(
+        db,
+        admin,
+        "admin.feature_flag.updated",
+        "feature_flag",
+        flag.key,
+        {
+            "before": before,
+            "after": {"enabled": flag.enabled, "rollout_percent": flag.rollout_percent},
+            "forced_subjects": len(allow_subjects),
+        },
+    )
+    await db.commit()
+    return {"status": "ok", "key": flag.key}
+
+
+@app.get("/api/internal/features/{flag_key}")
+async def internal_feature_flag(
+    flag_key: str, subject: str = "", db: AsyncSession = Depends(get_session)
+):
+    if flag_key not in {definition.key for definition in FLAG_DEFINITIONS}:
+        raise HTTPException(404, "Unknown feature flag")
+    return {"key": flag_key, "subject": subject, "enabled": await feature_enabled(db, flag_key, subject)}
 
 
 @app.get("/api/admin/audit")
@@ -1294,6 +1398,8 @@ async def admin_block_reseller(
     if not r:
         raise HTTPException(404, "Reseller not found")
     r.is_blocked = req.blocked
+    if req.blocked:
+        await portal_security.revoke_customer_sessions(r.id)
     await _audit(
         db,
         admin,

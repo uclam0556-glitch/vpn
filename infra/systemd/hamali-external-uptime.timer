@@ -1,0 +1,11 @@
+[Unit]
+Description=Run external HamaliVPN uptime check every two minutes
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=2m
+AccuracySec=15s
+Unit=hamali-external-uptime.service
+
+[Install]
+WantedBy=timers.target

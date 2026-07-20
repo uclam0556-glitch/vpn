@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./data/hamalivpn.db"
     redis_url: str = "redis://redis:6379/0"
+    redis_fallback_url: str = ""
 
     bot_token: SecretStr = SecretStr("")
     bot_username: str = "HamaliVpn_bot"
@@ -30,6 +31,10 @@ class Settings(BaseSettings):
     admin_password: SecretStr = SecretStr("change-me")
     session_secret: SecretStr = SecretStr("change-me-session-secret")
     secure_cookies: bool = False
+    portal_session_ttl_seconds: int = 4 * 60 * 60
+    portal_auth_attempts: int = 10
+    portal_auth_window_seconds: int = 5 * 60
+    portal_legacy_bearer_enabled: bool = True
 
     public_base_url: str = "http://localhost:8080"
     # Public activation endpoints. In production, configure the fallback on a

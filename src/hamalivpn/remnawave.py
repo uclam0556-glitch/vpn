@@ -50,6 +50,8 @@ class RemnawaveGateway(Protocol):
 
     async def delete_hwid_device(self, user_uuid: str, hwid: str) -> None: ...
 
+    async def list_nodes_summary(self) -> list[dict]: ...
+
 
 class RemnawaveClient:
     def __init__(
@@ -170,6 +172,39 @@ class RemnawaveClient:
         except RemnawaveNotFoundError:
             pass  # already removed — idempotent success
 
+    async def list_nodes_summary(self) -> list[dict]:
+        response = await self._request("GET", "/api/nodes")
+        rows = response.get("response", response)
+        summaries: list[dict] = []
+        for node in rows if isinstance(rows, list) else []:
+            system = node.get("system") or {}
+            info = system.get("info") or {}
+            stats = system.get("stats") or {}
+            interface = stats.get("interface") or {}
+            memory_total = int(info.get("memoryTotal") or 0)
+            memory_used = int(stats.get("memoryUsed") or 0)
+            cpus = max(1, int(info.get("cpus") or 1))
+            load = stats.get("loadAvg") or []
+            load_one = float(load[0]) if load else 0.0
+            summaries.append(
+                {
+                    "name": str(node.get("name") or "Node")[:100],
+                    "country_code": str(node.get("countryCode") or "").upper()[:3],
+                    "connected": bool(node.get("isConnected")),
+                    "disabled": bool(node.get("isDisabled")),
+                    "users_online": int(node.get("usersOnline") or 0),
+                    "traffic_used_bytes": int(node.get("trafficUsedBytes") or 0),
+                    "rx_mbps": round(float(interface.get("rxBytesPerSec") or 0) * 8 / 1_000_000, 2),
+                    "tx_mbps": round(float(interface.get("txBytesPerSec") or 0) * 8 / 1_000_000, 2),
+                    "cpu_percent": round(min(999.0, load_one / cpus * 100), 1),
+                    "memory_percent": round(memory_used / memory_total * 100, 1)
+                    if memory_total
+                    else 0.0,
+                    "updated_at": node.get("updatedAt"),
+                }
+            )
+        return summaries
+
 
 class MockRemnawaveClient:
     """Deterministic local gateway used before the real panel is connected."""
@@ -232,6 +267,9 @@ class MockRemnawaveClient:
 
     async def delete_hwid_device(self, user_uuid: str, hwid: str) -> None:
         return None
+
+    async def list_nodes_summary(self) -> list[dict]:
+        return []
 
 
 def make_remnawave_gateway(settings: Settings) -> RemnawaveGateway:

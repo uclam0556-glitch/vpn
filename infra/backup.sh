@@ -4,6 +4,7 @@
 #   sudo cp /tmp/backup.sh /opt/hamalivpn/backup.sh && sudo chmod +x /opt/hamalivpn/backup.sh
 #   (cron) sudo crontab -e  ->  0 4 * * * /opt/hamalivpn/backup.sh >> /var/log/hamali-backup.log 2>&1
 set -Eeuo pipefail
+umask 077
 
 DIR=/opt/hamalivpn/backups
 TS=$(date +%Y%m%d_%H%M%S)

@@ -1,0 +1,11 @@
+[Unit]
+Description=HamaliVPN encrypted backup restore drill
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hamalivpn/infra/verify-backup-restore.sh
+User=root
+PrivateTmp=true
+NoNewPrivileges=true

@@ -1,5 +1,5 @@
 // HamaliVPN partner portal — premium SPA for the existing api.py backend.
-// Auth: Bearer portal_access_key (issued by admin). No build step.
+// Auth: short-lived HttpOnly session created from a portal key. No build step.
 const app = document.getElementById("app");
 const toastEl = document.getElementById("toast");
 const KEY_STORE = "hamali_portal_key";
@@ -44,7 +44,7 @@ const clearKey = () => {
   catch (err) { /* memory fallback */ }
 };
 
-async function api(path, { method = "GET", body } = {}) {
+async function api(path, { method = "GET", body, authRequired = true } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
   let res;
@@ -56,7 +56,6 @@ async function api(path, { method = "GET", body } = {}) {
       signal: controller.signal,
       headers: {
         ...(body ? { "Content-Type": "application/json" } : {}),
-        Authorization: `Bearer ${getKey()}`,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -69,9 +68,11 @@ async function api(path, { method = "GET", body } = {}) {
     clearTimeout(timeout);
   }
   if (res.status === 401) {
-    clearKey();
-    renderLogin("Ключ недействителен");
-    throw new Error("unauthorized");
+    if (authRequired) {
+      clearKey();
+      renderLogin("Сессия завершена — войдите снова");
+      throw new Error("unauthorized");
+    }
   }
   let data = null;
   try { data = await res.json(); } catch (err) { /* no body */ }
@@ -85,6 +86,18 @@ async function api(path, { method = "GET", body } = {}) {
     throw new Error(typeof d === "string" ? d : `Ошибка ${res.status}`);
   }
   return data;
+}
+
+async function loginWithKey(key) {
+  return api("/portal/session", { method: "POST", body: { key }, authRequired: false });
+}
+
+async function logout() {
+  try { await api("/portal/session", { method: "DELETE", authRequired: false }); }
+  catch (err) { /* local logout still succeeds */ }
+  clearKey();
+  state.me = null;
+  renderLogin();
 }
 
 function toast(msg, kind = "") {
@@ -171,18 +184,19 @@ function renderLogin(error = "") {
     e.preventDefault();
     const key = document.getElementById("key").value.trim();
     if (!key) return;
-    setKey(key);
     try {
-      state.me = await api("/portal/me");
+      state.me = await loginWithKey(key);
+      clearKey();
       state.tab = null;
       renderShell();
     } catch (err) {
       clearKey();
       if (err.message !== "unauthorized") {
+        const expectedAuthError = /неверн|слишком много/i.test(err.message || "");
         renderLogin(
           err.message && err.message.startsWith("Ошибка 5")
             ? "Портал временно недоступен. Обновите страницу через минуту или напишите в поддержку."
-            : "Не удалось проверить ключ. Проверьте подключение и попробуйте ещё раз."
+            : (expectedAuthError ? err.message : "Не удалось проверить ключ. Проверьте подключение и попробуйте ещё раз.")
         );
       }
     }
@@ -211,7 +225,7 @@ function renderFatal(error = "") {
 // ── shell ────────────────────────────────────────────────────────────────
 function tabsFor(role) {
   if (role === "super_admin") {
-    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["subadmins", "Субадмины"], ["tariffs", "Тарифы"], ["referrals", "Рефералы"], ["allkeys", "Ключи"], ["audit", "Аудит"]];
+    return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["subadmins", "Субадмины"], ["tariffs", "Тарифы"], ["referrals", "Рефералы"], ["allkeys", "Ключи"], ["releases", "Релизы"], ["audit", "Аудит"]];
   }
   return [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
 }
@@ -248,7 +262,8 @@ async function renderTab() {
   const map = {
     dashboard: viewDashboard, buy: viewBuy, clients: viewClients, resellers: viewResellers,
     subadmins: viewSubadmins,
-    admin: viewAdminDashboard, tariffs: viewTariffs, referrals: viewAdminReferrals, allkeys: viewAllKeys, audit: viewAudit,
+    admin: viewAdminDashboard, tariffs: viewTariffs, referrals: viewAdminReferrals, allkeys: viewAllKeys,
+    releases: viewFeatureFlags, audit: viewAudit,
   };
   try { await (map[state.tab] || (() => {}))(view); }
   catch (err) { if (err.message !== "unauthorized") view.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
@@ -806,20 +821,52 @@ function openResellerManageModal(r) {
 // ── admin: dashboard ─────────────────────────────────────────────────────────
 async function viewAdminDashboard(view) {
   const d = await api("/admin/dashboard");
+  const pending = (d.withdrawals && d.withdrawals.pending) || { count: 0, amount_rub: 0 };
+  const nodeRows = (d.nodes || []).map((node) => {
+    const traffic = Math.max(Number(node.rx_mbps || 0), Number(node.tx_mbps || 0));
+    return `<div class="row">
+      <div class="row__main"><div class="row__title">${esc(node.name)}
+        <span class="tag tag--${node.connected && !node.disabled ? "active" : "error"}">${node.connected && !node.disabled ? "онлайн" : "недоступна"}</span></div>
+        <div class="row__meta">${node.users_online || 0} онлайн · ↓ ${node.rx_mbps || 0} / ↑ ${node.tx_mbps || 0} Мбит/с · CPU ${node.cpu_percent || 0}% · RAM ${node.memory_percent || 0}%</div>
+        <div class="meter"><span style="width:${Math.min(100, traffic)}%"></span></div>
+      </div></div>`;
+  }).join("");
+  const maxDaily = Math.max(1, ...(d.daily_revenue || []).map((x) => Number(x.amount_rub || 0)));
+  const revenueBars = (d.daily_revenue || []).slice(-14).map((x) =>
+    `<div class="revenue-bar" title="${fmtDate(x.date)} · ${rub(x.amount_rub)}"><span style="height:${Math.max(5, Number(x.amount_rub || 0) / maxDaily * 100)}%"></span><small>${new Date(x.date).getDate()}</small></div>`
+  ).join("");
   view.innerHTML = `
     <div class="grid grid--stats">
-      <div class="card stat"><div class="stat__label">Выручка</div>
-        <div class="stat__value accent">${rub(d.revenue_rub)}</div>
-        <div class="stat__sub">оплачено всего</div></div>
+      <div class="card stat"><div class="stat__label">MRR · последние 30 дней</div>
+        <div class="stat__value accent">${rub(d.mrr_rub)}</div>
+        <div class="stat__sub">${d.mrr_change_percent == null ? "первый период" : `${d.mrr_change_percent >= 0 ? "+" : ""}${d.mrr_change_percent}% к прошлым 30 дням`}</div></div>
       <div class="card stat"><div class="stat__label">Активные ключи</div>
         <div class="stat__value">${d.active_subs}</div></div>
-      <div class="card stat"><div class="stat__label">Реселлеры</div>
-        <div class="stat__value">${d.resellers}</div></div>
-      <div class="card stat"><div class="stat__label">Клиенты</div>
-        <div class="stat__value">${d.clients}</div></div>
-      <div class="card stat"><div class="stat__label">Баланс реселлеров</div>
-        <div class="stat__value">${rub(d.reseller_balance_rub)}</div></div>
+      <div class="card stat"><div class="stat__label">Активные пользователи · 30 дней</div>
+        <div class="stat__value">${d.active_users_30d}</div></div>
+      <div class="card stat"><div class="stat__label">Продления · 30 дней</div>
+        <div class="stat__value">${d.renewals_30d}</div></div>
+      <div class="card stat"><div class="stat__label">Ошибки платежей · 30 дней</div>
+        <div class="stat__value ${d.payment_errors_30d ? "danger" : ""}">${d.payment_errors_30d}</div>
+        <div class="stat__sub">старых pending: ${d.stale_pending_payments}</div></div>
+      <div class="card stat"><div class="stat__label">Выводы ожидают</div>
+        <div class="stat__value ${pending.count ? "warn" : ""}">${pending.count}</div>
+        <div class="stat__sub">${rub(pending.amount_rub)}</div></div>
     </div>
+    <div class="grid grid--2 ops-grid">
+      <div class="card"><h3>Динамика выручки · 14 дней</h3>
+        <div class="revenue-chart">${revenueBars || `<div class="empty">Нет оплаченных транзакций</div>`}</div></div>
+      <div class="card"><h3>Бизнес-контур</h3>
+        <div class="kpi-list"><div><span>Выручка всего</span><b>${rub(d.revenue_rub)}</b></div>
+          <div><span>Клиенты / реселлеры</span><b>${d.clients} / ${d.resellers}</b></div>
+          <div><span>Баланс партнёров</span><b>${rub(d.reseller_balance_rub)}</b></div></div></div>
+    </div>
+    <div class="section-title"><h2>Нагрузка локаций</h2><span class="muted">без IP и конфигураций</span></div>
+    <div class="rows">${nodeRows || `<div class="empty">${esc(d.nodes_error || "Нет данных о нодах")}</div>`}</div>
+    <div class="section-title"><h2>Выводы партнёров</h2></div>
+    <div class="rows">${(d.recent_withdrawals || []).length ? d.recent_withdrawals.map((w) => `<div class="row">
+      <div class="row__main"><div class="row__title">Заявка #${w.id} · ${rub(w.amount_rub)} <span class="tag tag--${w.status === "pending" ? "pending" : (w.status === "approved" ? "active" : "disabled")}">${esc(w.status)}</span></div>
+      <div class="row__meta">Партнёр #${w.customer_id} · ${fmtDateTime(w.created_at)} · ${esc(w.requisites || "")}</div></div></div>`).join("") : `<div class="empty">Заявок пока нет</div>`}</div>
     <div class="section-title"><h2>Последние платежи</h2></div>
     <div class="rows">
       ${(d.recent_payments || []).length ? d.recent_payments.map((p) => `<div class="row">
@@ -828,6 +875,38 @@ async function viewAdminDashboard(view) {
         <div class="amount-pos">+${rub(p.amount)}</div></div>`).join("")
         : `<div class="empty">Платежей пока нет</div>`}
     </div>`;
+}
+
+// ── admin: controlled releases ─────────────────────────────────────────────
+async function viewFeatureFlags(view) {
+  const flags = await api("/admin/feature-flags");
+  view.innerHTML = `<div class="section-title"><div><h2>Feature flags и canary</h2>
+    <div class="muted" style="font-size:12.5px;margin-top:4px">Сначала включите 1–5% тестовой группы. Текущий production-путь не меняется при 0%.</div></div></div>
+    <div class="rows">${flags.map((flag) => `<div class="card flag-card" data-flag="${esc(flag.key)}">
+      <div class="flag-head"><div><div class="row__title">${esc(flag.key)}</div><div class="row__meta">${esc(flag.description)}</div></div>
+        <label class="switch"><input type="checkbox" class="flag-enabled" ${flag.enabled ? "checked" : ""}><span></span></label></div>
+      <div class="field"><label>Доля тестовой группы: <b class="flag-value">${flag.rollout_percent}%</b></label>
+        <input class="range flag-rollout" type="range" min="0" max="100" step="1" value="${flag.rollout_percent}"></div>
+      <div class="field"><label>Принудительные тестовые ID / токены — по одному в строке</label>
+        <textarea class="input flag-subjects" rows="3" placeholder="test-user-1">${esc(((flag.config || {}).allow_subjects || []).join("\n"))}</textarea></div>
+      <button class="btn btn--primary btn--sm flag-save">Сохранить rollout</button>
+    </div>`).join("")}</div>`;
+  view.querySelectorAll(".flag-card").forEach((card) => {
+    const range = card.querySelector(".flag-rollout");
+    range.addEventListener("input", () => { card.querySelector(".flag-value").textContent = `${range.value}%`; });
+    card.querySelector(".flag-save").addEventListener("click", async (event) => {
+      const btn = event.currentTarget; btn.disabled = true;
+      const allowSubjects = card.querySelector(".flag-subjects").value.split("\n").map((x) => x.trim()).filter(Boolean);
+      try {
+        await api(`/admin/feature-flags/${encodeURIComponent(card.dataset.flag)}`, { method: "PUT", body: {
+          enabled: card.querySelector(".flag-enabled").checked,
+          rollout_percent: Number(range.value), allow_subjects: allowSubjects,
+        }});
+        toast("Rollout сохранён", "ok");
+      } catch (err) { toast(err.message, "err"); }
+      finally { btn.disabled = false; }
+    });
+  });
 }
 
 // ── admin: tariffs ───────────────────────────────────────────────────────────
@@ -1028,7 +1107,7 @@ document.addEventListener("click", (e) => {
   if (t.dataset.openurl) return window.open(t.dataset.openurl, "_blank");
   if (t.dataset.tab) { state.tab = t.dataset.tab; renderShell(); return; }
   const a = t.dataset.action;
-  if (a === "logout") { clearKey(); state.me = null; renderLogin(); return; }
+  if (a === "logout") { logout(); return; }
   if (a === "close") return closeModal();
   if (a === "add-reseller") return openCreateResellerModal();
   if (a === "add-subadmin") return openCreateSubadminModal();
@@ -1046,9 +1125,18 @@ document.addEventListener("click", (e) => {
 
 // ── boot ───────────────────────────────────────────────────────────────────
 async function boot() {
-  if (!getKey()) return renderLogin();
-  try { state.me = await api("/portal/me"); renderShell(); }
-  catch (err) { if (err.message !== "unauthorized") renderFatal(err.message); }
+  try {
+    const legacyKey = getKey();
+    if (legacyKey) {
+      state.me = await loginWithKey(legacyKey);
+      clearKey();
+    } else {
+      state.me = await api("/portal/me", { authRequired: false });
+    }
+    renderShell();
+  } catch (err) {
+    renderLogin();
+  }
 }
 window.addEventListener("error", (event) => {
   renderFatal(event.message || "Ошибка интерфейса");
