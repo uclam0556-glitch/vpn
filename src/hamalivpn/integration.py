@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import copy
 import html
 import ipaddress
 import json
@@ -59,14 +58,12 @@ def _profile_name(config: dict, fallback: str) -> str:
 
 
 def _json_subscription_nodes(data: object) -> list[dict[str, str]]:
-    """Expose every proxy outbound as an independently usable JSON profile.
+    """Keep each provider profile intact and in its original order.
 
-    Flattening an outbound to a share URI discards XHTTP/TLS fields. Keeping the
-    original multi-outbound document, on the other hand, makes individual nodes
-    impossible to select in /nodes. Build one self-contained JSON document per
-    proxy outbound: the selected outbound remains byte-for-field complete, while
-    non-proxy support outbounds (DNS/direct/block) and compatible routing rules
-    are retained.
+    A JSON profile can contain several cooperating proxy outbounds, DNS rules,
+    balancers and observatory settings. Those are routing legs of one server
+    profile, not independent nodes. Splitting them changes connection semantics
+    and produces hundreds of misleading entries in the bot.
     """
 
     configs = data if isinstance(data, list) else [data]
@@ -74,81 +71,49 @@ def _json_subscription_nodes(data: object) -> list[dict[str, str]]:
     for index, config in enumerate(configs, start=1):
         if not isinstance(config, dict):
             continue
-        base_name = _profile_name(config, f"Custom Node {index}")
-        configured_outbounds = config.get("outbounds")
-        outbounds = configured_outbounds if isinstance(configured_outbounds, list) else []
-        proxy_protocols = {"vless", "vmess", "trojan", "shadowsocks"}
-        proxy_outbounds = [
-            outbound
-            for outbound in outbounds
-            if isinstance(outbound, dict) and outbound.get("protocol") in proxy_protocols
-        ]
-
-        if not proxy_outbounds:
-            nodes.append(
-                {
-                    "raw_link": json.dumps(
-                        config, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-                    ),
-                    "original_name": base_name,
-                }
-            )
-            continue
-
-        primary = next(
-            (
-                outbound
-                for outbound in proxy_outbounds
-                if str(outbound.get("tag") or "").strip().lower()
-                in {"proxy", "primary", "main", "default"}
-            ),
-            proxy_outbounds[0],
+        nodes.append(
+            {
+                "raw_link": json.dumps(
+                    config, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                ),
+                "original_name": _profile_name(config, f"Custom Node {index}"),
+            }
         )
-        support_outbounds = [
-            copy.deepcopy(outbound)
-            for outbound in outbounds
-            if isinstance(outbound, dict) and outbound.get("protocol") not in proxy_protocols
-        ]
-
-        for outbound_index, outbound in enumerate(proxy_outbounds, start=1):
-            tag = str(outbound.get("tag") or f"node-{outbound_index}").strip()
-            profile_name = base_name if outbound is primary else f"{base_name} · {tag}"
-            standalone = copy.deepcopy(config)
-            standalone["remarks"] = profile_name[:200]
-            standalone["outbounds"] = [copy.deepcopy(outbound), *copy.deepcopy(support_outbounds)]
-            standalone.pop("burstObservatory", None)
-            standalone.pop("observatory", None)
-
-            routing = standalone.get("routing")
-            if isinstance(routing, dict):
-                retained_tags = {
-                    str(item.get("tag") or "")
-                    for item in standalone["outbounds"]
-                    if isinstance(item, dict)
-                }
-                routing.pop("balancers", None)
-                rules = routing.get("rules")
-                if isinstance(rules, list):
-                    routing["rules"] = [
-                        rule
-                        for rule in rules
-                        if isinstance(rule, dict)
-                        and not rule.get("balancerTag")
-                        and (
-                            not rule.get("outboundTag")
-                            or str(rule.get("outboundTag")) in retained_tags
-                        )
-                    ]
-
-            nodes.append(
-                {
-                    "raw_link": json.dumps(
-                        standalone, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-                    ),
-                    "original_name": profile_name[:200],
-                }
-            )
     return nodes
+
+
+def _node_connection_key(raw_link: str) -> str:
+    """Return a stable connection identity while ignoring a display fragment."""
+
+    value = str(raw_link or "").strip()
+    if not value or value.startswith(("{", "[")):
+        return value
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        if not parsed.scheme or not parsed.netloc:
+            return value
+        query = urllib.parse.urlencode(
+            sorted(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+        )
+        return urllib.parse.urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc, parsed.path, query, "")
+        )
+    except ValueError:
+        return value.split("#", 1)[0]
+
+
+def _deduplicate_subscription_nodes(nodes: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Keep the provider's first occurrence of an identical connection."""
+
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for node in nodes:
+        key = _node_connection_key(node.get("raw_link", ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(node)
+    return result
 
 
 def parse_subscription_content(content: str) -> list[dict[str, str]]:
@@ -175,7 +140,7 @@ def parse_subscription_content(content: str) -> list[dict[str, str]]:
             data = None
         json_nodes = _json_subscription_nodes(data)
         if json_nodes:
-            return json_nodes
+            return _deduplicate_subscription_nodes(json_nodes)
 
     for line in lines:
         if line.startswith(("{", "[")):
@@ -204,7 +169,7 @@ def parse_subscription_content(content: str) -> list[dict[str, str]]:
             )
         nodes.append({"raw_link": line, "original_name": str(name)[:200]})
 
-    return nodes
+    return _deduplicate_subscription_nodes(nodes)
 
 
 async def _ensure_public_subscription_url(url: str) -> None:
@@ -327,13 +292,19 @@ async def synchronize_integration_nodes(
 
     clean_incoming: list[dict[str, str]] = []
     seen_raw: set[str] = set()
-    for item in incoming_nodes:
+    for source_position, item in enumerate(incoming_nodes):
         raw_link = str(item.get("raw_link") or "").strip()
         original_name = str(item.get("original_name") or "Custom Node").strip()[:200]
         if not raw_link or raw_link in seen_raw:
             continue
         seen_raw.add(raw_link)
-        clean_incoming.append({"raw_link": raw_link, "original_name": original_name})
+        clean_incoming.append(
+            {
+                "raw_link": raw_link,
+                "original_name": original_name,
+                "source_position": source_position,
+            }
+        )
 
     incoming_name_counts = Counter(
         _normalized_profile_name(item["original_name"]) for item in clean_incoming
@@ -347,6 +318,7 @@ async def synchronize_integration_nodes(
     for item in clean_incoming:
         raw_link = item["raw_link"]
         original_name = item["original_name"]
+        source_position = item["source_position"]
         candidates = available(by_raw.get(raw_link, []))
         candidate = next((node for node in candidates if node.is_active), None)
         candidate = candidate or (candidates[0] if candidates else None)
@@ -364,15 +336,21 @@ async def synchronize_integration_nodes(
                     raw_link=raw_link,
                     original_name=original_name,
                     display_name=original_name,
+                    source_position=source_position,
                 )
             )
             added += 1
             continue
 
         retained_ids.add(candidate.id)
-        if candidate.raw_link != raw_link or candidate.original_name != original_name:
+        if (
+            candidate.raw_link != raw_link
+            or candidate.original_name != original_name
+            or candidate.source_position != source_position
+        ):
             candidate.raw_link = raw_link
             candidate.original_name = original_name
+            candidate.source_position = source_position
             updated += 1
 
     removed = 0
@@ -440,12 +418,13 @@ async def start_integration(message: Message) -> None:
         session.add(link)
         await session.flush()
 
-        for n in nodes:
+        for source_position, n in enumerate(nodes):
             node = IntegrationNode(
                 link_id=link.id,
                 raw_link=n["raw_link"],
                 original_name=n["original_name"],
                 display_name=n["original_name"],
+                source_position=source_position,
             )
             session.add(node)
 
@@ -456,7 +435,11 @@ async def start_integration(message: Message) -> None:
 async def show_integration_menu(
     message_or_query, link_id: int, session, is_edit=False, chat_id=None, msg_id=None
 ):
-    result = await session.execute(select(IntegrationNode).filter_by(link_id=link_id))
+    result = await session.execute(
+        select(IntegrationNode)
+        .filter_by(link_id=link_id)
+        .order_by(IntegrationNode.source_position, IntegrationNode.id)
+    )
     nodes = result.scalars().all()
 
     keyboard = []
@@ -734,7 +717,9 @@ async def _nodes_link_keyboard(
     """Build the per-link server list keyboard."""
     link = await session.get(IntegrationLink, link_id)
     result = await session.execute(
-        select(IntegrationNode).filter_by(link_id=link_id).order_by(IntegrationNode.id)
+        select(IntegrationNode)
+        .filter_by(link_id=link_id)
+        .order_by(IntegrationNode.source_position, IntegrationNode.id)
     )
     nodes = result.scalars().all()
 
@@ -745,13 +730,28 @@ async def _nodes_link_keyboard(
     else:
         filtered_nodes = nodes
 
-    # Ping all nodes concurrently
+    # Keep the exact provider order, with the nodes already published to users
+    # at the top. A control-server TCP timing is useful diagnostics, but it is
+    # not the same measurement as the end user's Happ latency and must not
+    # reshuffle the provider's list.
+    sorted_nodes = sorted(
+        filtered_nodes,
+        key=lambda node: (not node.is_active, node.source_position, node.id),
+    )
+
+    PAGE_SIZE = 8
+    total_pages = max(1, (len(sorted_nodes) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    page_nodes = sorted_nodes[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+
+    # Probe only the visible page. This keeps /nodes responsive even when a
+    # provider sends hundreds of entries.
     ping_tasks = []
 
     async def _none_ping():
         return None
 
-    for node in filtered_nodes:
+    for node in page_nodes:
         host, port = parse_node_address(node.raw_link)
         if host and port:
             ping_tasks.append(tcp_ping(host, port, connect_timeout=1.5))
@@ -760,26 +760,13 @@ async def _nodes_link_keyboard(
 
     pings = await asyncio.gather(*ping_tasks)
 
-    # Associate ping and sort
-    node_pings = list(zip(filtered_nodes, pings, strict=True))
-
-    def sort_key(item):
-        ping = item[1]
-        return ping if ping is not None else float("inf")
-
-    node_pings.sort(key=sort_key)
-    sorted_nodes = [item[0] for item in node_pings]
-    pings_map = {item[0].id: item[1] for item in node_pings}
-
-    PAGE_SIZE = 8
-    total_pages = max(1, (len(sorted_nodes) + PAGE_SIZE - 1) // PAGE_SIZE)
-    page = max(0, min(page, total_pages - 1))
-    page_nodes = sorted_nodes[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
+    pings_map = {node.id: ping for node, ping in zip(page_nodes, pings, strict=True)}
 
     text = (
         f"📡 <b>{_short_url(link.url)}</b>\n\n"
         f"Серверов: <b>{active_count}/{len(nodes)} активны</b>\n"
-        f"<i>(Отсортировано по пингу ⚡️)</i>\n\n"
+        f"<i>Сначала включённые, затем порядок источника</i>\n"
+        f"<i>TCP — проверка от панели, пинг в Happ измеряется с устройства</i>\n\n"
         "✅/❌ — вкл/выкл · ✏️ — переименовать · 🗑 — удалить"
     )
 

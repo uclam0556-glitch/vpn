@@ -98,7 +98,7 @@ def test_parse_xray_json_preserves_complete_profile() -> None:
     assert json.loads(nodes[0]["raw_link"]) == document
 
 
-def test_parse_xray_json_list_keeps_every_outbound_as_lossless_profile() -> None:
+def test_parse_xray_json_list_keeps_top_level_profiles_and_source_order() -> None:
     documents = [
         {
             "remarks": name,
@@ -114,25 +114,19 @@ def test_parse_xray_json_list_keeps_every_outbound_as_lossless_profile() -> None
 
     nodes = parse_subscription_content(json.dumps(documents))
 
-    assert [node["original_name"] for node in nodes] == [
-        "Spain",
-        "Spain · youtube",
-        "Austria",
-        "Austria · youtube",
-    ]
-    assert len(nodes) == 4
-    for node in nodes:
-        profile = json.loads(node["raw_link"])
-        proxy_outbounds = [
-            outbound for outbound in profile["outbounds"] if outbound.get("protocol") == "vless"
-        ]
-        assert len(proxy_outbounds) == 1
-        assert profile["remarks"] == node["original_name"]
-        assert any(outbound.get("protocol") == "freedom" for outbound in profile["outbounds"])
+    assert [node["original_name"] for node in nodes] == ["Spain", "Austria"]
+    assert [json.loads(node["raw_link"]) for node in nodes] == documents
 
-    youtube = json.loads(nodes[1]["raw_link"])
-    assert youtube["outbounds"][0]["tag"] == "youtube"
-    assert youtube["routing"]["rules"] == [{"outboundTag": "youtube"}]
+
+def test_parse_subscription_deduplicates_identical_connections_by_first_occurrence() -> None:
+    first = "vless://uuid@example.com:443?security=reality&type=tcp#First"
+    duplicate = "vless://uuid@example.com:443?type=tcp&security=reality#Second"
+    distinct = "vless://uuid-2@example.com:443?security=reality&type=tcp#Third"
+
+    assert parse_subscription_content("\n".join([first, duplicate, distinct])) == [
+        {"raw_link": first, "original_name": "First"},
+        {"raw_link": distinct, "original_name": "Third"},
+    ]
 
 
 def test_parse_node_address() -> None:
@@ -293,6 +287,7 @@ async def test_snapshot_sync_migrates_flattened_profiles_and_preserves_active_st
     assert rows[0]["display_name"] == "Австрия — резерв"
     assert rows[1]["display_name"] == "Испания"
     assert all(row["raw_link"].startswith("{") for row in rows)
+    assert [row["source_position"] for row in rows] == [0, 1]
 
 
 @pytest.mark.asyncio

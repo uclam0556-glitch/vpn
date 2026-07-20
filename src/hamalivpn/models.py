@@ -244,6 +244,7 @@ class IntegrationNode(Base):
     raw_link: Mapped[str] = mapped_column(Text)
     original_name: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(255))
+    source_position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, server_default=func.now()
