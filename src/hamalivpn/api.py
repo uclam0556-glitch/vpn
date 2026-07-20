@@ -2569,7 +2569,15 @@ async def internal_integrated_nodes(db: AsyncSession = Depends(get_session)):
     """Return all active integration nodes for injection into the main subscription."""
     from .models import IntegrationNode
 
-    result = await db.execute(select(IntegrationNode).filter(IntegrationNode.is_active.is_(True)))
+    result = await db.execute(
+        select(IntegrationNode)
+        .filter(IntegrationNode.is_active.is_(True))
+        .order_by(
+            IntegrationNode.link_id,
+            IntegrationNode.source_position,
+            IntegrationNode.id,
+        )
+    )
     nodes = result.scalars().all()
     return {
         # Keep the original field byte-compatible for Happ and older injectors.

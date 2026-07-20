@@ -191,6 +191,15 @@ async def test_internal_nodes_endpoint_returns_only_active_nodes(session_factory
                     raw_link="vless://active@example.com:443#Active",
                     original_name="Active",
                     display_name="Active",
+                    source_position=1,
+                    is_active=True,
+                ),
+                IntegrationNode(
+                    link_id=link.id,
+                    raw_link="vless://first@example.com:443#First",
+                    original_name="First",
+                    display_name="First",
+                    source_position=0,
                     is_active=True,
                 ),
                 IntegrationNode(
@@ -216,13 +225,21 @@ async def test_internal_nodes_endpoint_returns_only_active_nodes(session_factory
 
     assert response.status_code == 200
     assert response.json() == {
-        "nodes": ["vless://active@example.com:443#Active"],
+        "nodes": [
+            "vless://first@example.com:443#First",
+            "vless://active@example.com:443#Active",
+        ],
         "items": [
+            {
+                "raw_link": "vless://first@example.com:443#First",
+                "display_name": "First",
+                "original_name": "First",
+            },
             {
                 "raw_link": "vless://active@example.com:443#Active",
                 "display_name": "Active",
                 "original_name": "Active",
-            }
+            },
         ],
     }
 
