@@ -150,14 +150,25 @@ function modal(html) {
   closeModal();
   const back = document.createElement("div");
   back.className = "modal-backdrop";
-  back.innerHTML = `<div class="modal">${html}</div>`;
+  back.innerHTML = `<div class="modal" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
   back.addEventListener("click", (e) => { if (e.target === back) closeModal(); });
+  back._escapeHandler = (e) => { if (e.key === "Escape") closeModal(); };
+  document.addEventListener("keydown", back._escapeHandler);
+  document.body.classList.add("modal-open");
   document.body.appendChild(back);
+  requestAnimationFrame(() => {
+    const focusTarget = back.querySelector("input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])") || back.querySelector(".modal");
+    focusTarget.focus({ preventScroll: true });
+  });
   return back;
 }
 const closeModal = () => {
   const back = document.querySelector(".modal-backdrop");
-  if (back) back.remove();
+  if (back) {
+    if (back._escapeHandler) document.removeEventListener("keydown", back._escapeHandler);
+    back.remove();
+  }
+  document.body.classList.remove("modal-open");
 };
 
 // ── login ────────────────────────────────────────────────────────────────
@@ -231,30 +242,80 @@ function tabsFor(role) {
   return [["dashboard", "Обзор"], ["buy", "Купить"], ["packages", "Пакеты"], ["clients", "Клиенты"]];
 }
 
+const TAB_META = {
+  dashboard: { icon: "home", title: "Главная", nav: "Главная", description: "Баланс, клиенты и последние операции — всё важное на одном экране." },
+  buy: { icon: "plus", title: "Создать ключ", nav: "Купить", description: "Выберите тариф, укажите клиента и получите готовую ссылку для подключения." },
+  packages: { icon: "pack", title: "Пакеты ключей", nav: "Пакеты", description: "Раздавайте отдельные персональные ключи: один человек — одно устройство." },
+  clients: { icon: "users", title: "Клиенты", nav: "Клиенты", description: "Находите ключи, продлевайте доступ и управляйте подключёнными устройствами." },
+  admin: { icon: "chart", title: "Обзор бизнеса", nav: "Обзор", description: "Главные показатели, платежи и состояние инфраструктуры в реальном времени." },
+  resellers: { icon: "briefcase", title: "Реселлеры", nav: "Реселлеры", description: "Баланс, уровень, доступ и состояние каждого партнёра." },
+  subadmins: { icon: "shield", title: "Субадмины", nav: "Субадмины", description: "Безопасно выдавайте сотрудникам ограниченный доступ к управлению." },
+  tariffs: { icon: "tag", title: "Тарифы", nav: "Тарифы", description: "Настройте стоимость, срок, трафик и количество устройств для реселлеров." },
+  referrals: { icon: "share", title: "Рефералы", nav: "Рефералы", description: "Статистика участников реферальной программы и их начислений." },
+  allkeys: { icon: "key", title: "Все ключи", nav: "Ключи", description: "Общий список подписок: поиск, создание и безопасное управление доступом." },
+  releases: { icon: "rocket", title: "Безопасные релизы", nav: "Релизы", description: "Включайте новые возможности постепенно для тестовой группы пользователей." },
+  audit: { icon: "history", title: "Журнал действий", nav: "Аудит", description: "История важных изменений без отображения паролей, токенов и конфигураций." },
+};
+
+function icon(name) {
+  const paths = {
+    home: '<path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10M9 20v-6h6v6"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    pack: '<path d="m4 7 8-4 8 4-8 4-8-4Z"/><path d="m4 12 8 4 8-4M4 17l8 4 8-4"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+    chart: '<path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/>',
+    briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V4h8v3M3 12h18M10 12v2h4v-2"/>',
+    shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/>',
+    tag: '<path d="M20.6 13.6 11 23l-9-9V3h11l7.6 7.6a2 2 0 0 1 0 3Z"/><circle cx="7.5" cy="8.5" r="1.5"/>',
+    share: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 10.5 6.8-4M8.6 13.5l6.8 4"/>',
+    key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M15 8l3 3M17 6l3 3"/>',
+    rocket: '<path d="M14 4c4-3 7-2 7-2s1 3-2 7l-5 5-4-4 4-6Z"/><path d="m10 10-5 1-3 3 7 1M14 14l-1 5-3 3-1-7M5 19c-1 1-3 1-3 1s0-2 1-3 3-1 3-1 0 2-1 3Z"/>',
+    history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+    logout: '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5"/>',
+  };
+  return `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.home}</svg>`;
+}
+
 function renderShell() {
   markBootReady();
   const role = state.me.role;
   const tabs = tabsFor(role);
   if (!state.tab) state.tab = tabs[0][0];
   const isAdmin = role === "super_admin";
+  const current = TAB_META[state.tab] || { title: "Кабинет", description: "Управление сервисом" };
   app.innerHTML = `
     <div class="shell">
       <div class="topbar">
         <div class="topbar__id">
-          <div class="brand__mark" style="width:36px;height:36px;font-size:18px;border-radius:11px">H</div>
-          <div class="topbar__name">${esc(state.me.name || "Партнёр")}</div>
-          ${isAdmin ? `<span class="pill">Админ</span>`
-            : (state.me.level ? `<span class="pill">${LEVEL_RU[state.me.level] || ""}</span>` : "")}
+          <div class="brand__mark topbar__mark">H</div>
+          <div class="topbar__account"><div class="topbar__name">${esc(state.me.name || "Партнёр")}</div>
+            <div class="topbar__role">${isAdmin ? "Администратор" : `Партнёр${state.me.level ? " · " + (LEVEL_RU[state.me.level] || "") : ""}`}</div></div>
         </div>
-        <button class="btn btn--ghost btn--sm" data-action="logout">Выйти</button>
+        <button class="btn btn--ghost btn--sm topbar__logout" data-action="logout" aria-label="Выйти из кабинета">
+          ${icon("logout")}<span>Выйти</span></button>
       </div>
-      <div class="tabs">
-        ${tabs.map(([id, label]) =>
-          `<button class="tab ${state.tab === id ? "is-active" : ""}" data-tab="${id}">${label}</button>`
+      <nav class="tabs" aria-label="Разделы кабинета">
+        ${tabs.map(([id]) =>
+          `<button class="tab ${state.tab === id ? "is-active" : ""}" data-tab="${id}" ${state.tab === id ? 'aria-current="page"' : ""}>${icon(TAB_META[id].icon)}<span>${esc(TAB_META[id].nav)}</span></button>`
         ).join("")}
-      </div>
+      </nav>
+      <header class="page-head">
+        <div class="page-head__icon">${icon(current.icon || "home")}</div>
+        <div><h1>${esc(current.title)}</h1><p>${esc(current.description)}</p></div>
+      </header>
       <div id="view"><div class="empty">Загрузка…</div></div>
+      <nav class="mobile-nav" aria-label="Мобильная навигация">
+        <div class="mobile-nav__scroll">
+          ${tabs.map(([id]) => `<button class="mobile-nav__item ${state.tab === id ? "is-active" : ""}" data-tab="${id}" ${state.tab === id ? 'aria-current="page"' : ""}>
+            ${icon(TAB_META[id].icon)}<span>${esc(TAB_META[id].nav)}</span></button>`).join("")}
+        </div>
+      </nav>
     </div>`;
+  requestAnimationFrame(() => {
+    const nav = document.querySelector(".mobile-nav__scroll");
+    const active = nav && nav.querySelector(".is-active");
+    if (nav && active) nav.scrollLeft = Math.max(0, active.offsetLeft - (nav.clientWidth - active.clientWidth) / 2);
+  });
   renderTab();
 }
 
@@ -303,6 +364,15 @@ async function viewDashboard(view) {
       <div class="card stat"><div class="stat__label">Клиенты</div>
         <div class="stat__value">${d.clients_count}</div></div>
     </div>
+    <div class="quickstart">
+      <div class="quickstart__head"><div><span class="eyebrow">Быстрый старт</span><h2>Продайте VPN за 3 шага</h2></div>
+        <button class="btn btn--primary btn--sm" data-tab="buy">Создать ключ</button></div>
+      <div class="quickstart__steps">
+        <div class="quickstep"><span>1</span><div><b>Выберите тариф</b><small>Цена спишется с баланса один раз.</small></div></div>
+        <div class="quickstep"><span>2</span><div><b>Укажите клиента</b><small>Имя поможет быстро найти его позже.</small></div></div>
+        <div class="quickstep"><span>3</span><div><b>Отправьте ссылку</b><small>Клиент подключится по понятной инструкции.</small></div></div>
+      </div>
+    </div>
     <div class="section-title"><h2>Последние операции</h2></div>
     <div class="rows">
       ${(d.transactions || []).length
@@ -325,7 +395,8 @@ function txRow(t) {
 async function viewBuy(view) {
   const tariffs = await api("/reseller/tariffs");
   view.innerHTML = `
-    <div class="section-title"><h2>Выберите тариф</h2>
+    <div class="notice"><span class="notice__icon">i</span><div><b>Как это работает</b><span>Нажмите тариф, заполните данные клиента и отправьте ему готовую ссылку. Настройки VPN создавать вручную не нужно.</span></div></div>
+    <div class="section-title"><h2>Доступные тарифы</h2>
       <span class="muted">Баланс: ${rub((state.cache.balance != null ? state.cache.balance : 0))}</span></div>
     <div class="grid grid--2">
       ${tariffs.length ? tariffs.map(tariffCard).join("") : `<div class="empty">Тарифы не настроены</div>`}
