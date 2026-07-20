@@ -1,149 +1,126 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>HamaliVPN Premium</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/tma/styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#070913">
+  <title>HamaliVPN</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/tma/styles.css?v=2">
 </head>
 <body>
-    <!-- Animated Background -->
-    <div class="mesh-bg">
-        <div class="mesh-blob blob-1"></div>
-        <div class="mesh-blob blob-2"></div>
-        <div class="mesh-blob blob-3"></div>
-    </div>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v10h13V10M9 20v-6h6v6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20M6 15h4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 1 1 5.83 1c0 2-3 2-3 4M12 18h.01"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="m13 2-9 12h8l-1 8 9-12h-8l1-8Z"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M15 9V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h4"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-gift" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="13" rx="2"/><path d="M12 8v13M3 12h18M7.5 8C5 8 4 7 4 5.5S5 3 6.5 3C9 3 12 8 12 8M16.5 8C19 8 20 7 20 5.5S19 3 17.5 3C15 3 12 8 12 8"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/><path d="M8 10h8M8 14h5"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 9A7 7 0 0 1 18 6l2 6M17.9 15A7 7 0 0 1 6 18l-2-6"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></symbol>
+    <symbol id="i-speed" viewBox="0 0 24 24"><path d="M4.9 19a9 9 0 1 1 14.2 0"/><path d="m12 13 4-4M12 19h.01"/></symbol>
+  </svg>
 
-    <div id="app">
-        <main id="content">
-            <!-- Home View -->
-            <section id="view-home" class="view active">
-                <h2 class="view-title">HamaliVPN</h2>
+  <div class="ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div id="app" class="app-shell">
+    <header class="app-header">
+      <div class="brand"><div class="brand-mark"><svg><use href="#i-shield"/></svg></div>
+        <div><b>HamaliVPN</b><span><i class="online-dot"></i> Сервис работает</span></div></div>
+      <button class="icon-button" id="header-support" aria-label="Открыть поддержку"><svg><use href="#i-chat"/></svg></button>
+    </header>
 
-                <div class="glass-card">
-                    <div class="status-header">
-                        <div class="status-badge skeleton" id="status-badge">
-                            <i id="status-dot"></i> <span id="status-text">Загрузка</span>
-                        </div>
-                        <div class="skeleton" id="days-left-badge" style="font-size: 0.85rem; font-weight: 600;">-- дней</div>
-                    </div>
+    <main id="content" class="content">
+      <section class="view active" id="view-home" data-view="home">
+        <div class="welcome"><span id="welcome-kicker">Добро пожаловать</span><h1 id="welcome-name">Ваш безопасный интернет</h1></div>
+        <article class="hero-card" id="hero-card">
+          <div class="hero-glow"></div>
+          <div class="hero-top"><span class="status-pill loading" id="status-pill"><i></i><span>Проверяем подписку</span></span><span class="days-pill" id="days-pill">—</span></div>
+          <div class="hero-center">
+            <div class="power-orbit"><div class="orbit orbit-a"></div><div class="orbit orbit-b"></div><button class="power-button" id="power-button" aria-label="Подключить VPN"><svg><use href="#i-bolt"/></svg></button></div>
+            <h2 id="hero-title">Загружаем доступ</h2><p id="hero-subtitle">Это займёт пару секунд</p>
+          </div>
+          <div class="hero-metrics">
+            <div><span>Устройства</span><b id="home-devices">—</b></div>
+            <div><span>Трафик</span><b id="home-traffic">—</b></div>
+            <div><span>Защита</span><b id="home-health">—</b></div>
+          </div>
+        </article>
+        <button class="primary-action loading" id="home-connect"><svg><use href="#i-bolt"/></svg><span>Подключить VPN</span><svg class="action-arrow"><use href="#i-arrow"/></svg></button>
 
-                    <!-- Circular Progress for Traffic -->
-                    <div class="progress-ring-container">
-                        <svg class="progress-ring">
-                            <circle class="progress-ring__circle_bg" cx="70" cy="70" r="60"></circle>
-                            <circle class="progress-ring__circle" id="traffic-ring" cx="70" cy="70" r="60" stroke-dasharray="377" stroke-dashoffset="377"></circle>
-                        </svg>
-                        <div class="progress-content">
-                            <span class="progress-value skeleton" id="traffic-value">0</span>
-                            <span class="progress-label skeleton" id="traffic-label">ГБ Использовано</span>
-                        </div>
-                    </div>
-
-                    <div class="status-details">
-                        <div class="detail-item">
-                            <span class="detail-label">Лимит трафика</span>
-                            <span class="detail-value skeleton" id="traffic-limit">--</span>
-                        </div>
-                        <div class="detail-item" style="text-align: right;">
-                            <span class="detail-label">Устройства</span>
-                            <span class="detail-value skeleton" id="devices-count">-- / --</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="btn-connect-container" id="connect-container">
-                    <button class="btn-connect skeleton" id="btn-smart-connect">
-                        🚀 Подключить в 1 клик
-                    </button>
-                    <button class="btn btn-connect secondary" id="btn-renew" style="display: none;">
-                        ⭐️ Продлить подписку
-                    </button>
-                </div>
-            </section>
-
-            <!-- Devices View -->
-            <section id="view-devices" class="view">
-                <h2 class="view-title">Устройства</h2>
-                <div id="devices-list" class="devices-list">
-                    <!-- Skeletons initially -->
-                    <div class="device-item skeleton" style="height: 80px;"></div>
-                    <div class="device-item skeleton" style="height: 80px;"></div>
-                </div>
-            </section>
-
-            <!-- Referrals View -->
-            <section id="view-referrals" class="view">
-                <h2 class="view-title">Партнёрская сеть</h2>
-
-                <div class="glass-card balance-card">
-                    <h3>Ваш баланс</h3>
-                    <div class="balance-amount skeleton" id="ref-balance">0 ₽</div>
-
-                    <div class="ref-level-container">
-                        <div class="ref-level-header">
-                            <span class="skeleton" id="ref-level-text">Уровень 1</span>
-                            <span class="skeleton" id="ref-next-text">Осталось 0 приглашений</span>
-                        </div>
-                        <div class="ref-progress-bar skeleton" id="ref-bar-container">
-                            <div class="ref-progress-fill" id="ref-progress-fill"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="glass-card">
-                    <h3>Ваша ссылка</h3>
-                    <p style="color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 12px;">Приглашайте друзей и получайте % с их оплат навсегда.</p>
-                    <div class="copy-box skeleton" id="ref-link-box">
-                        <span id="ref-link-text">Генерация...</span>
-                        <button class="btn-icon" id="btn-copy-ref">📋</button>
-                    </div>
-                    <button class="btn btn-share skeleton" id="btn-share-tg">
-                        ✈️ Отправить в Telegram
-                    </button>
-                </div>
-
-                <div class="stats-grid">
-                    <div class="stat-item skeleton" id="stat-1">
-                        <span class="stat-value" id="ref-count">0</span>
-                        <span class="stat-label">Приглашено</span>
-                    </div>
-                    <div class="stat-item skeleton" id="stat-2">
-                        <span class="stat-value" id="ref-earned">0 ₽</span>
-                        <span class="stat-label">Заработано</span>
-                    </div>
-                </div>
-            </section>
-        </main>
-
-        <!-- Bottom Navigation -->
-        <nav class="bottom-nav glass-nav">
-            <button class="nav-btn active" data-target="home">
-                <span class="nav-icon">🏠</span>
-                <span class="nav-text">Главная</span>
-            </button>
-            <button class="nav-btn" data-target="devices">
-                <span class="nav-icon">📱</span>
-                <span class="nav-text">Устройства</span>
-            </button>
-            <button class="nav-btn" data-target="referrals">
-                <span class="nav-icon">💎</span>
-                <span class="nav-text">Заработок</span>
-            </button>
-        </nav>
-    </div>
-
-    <!-- Modal -->
-    <div id="modal-overlay" class="modal-overlay">
-        <div class="modal glass-card">
-            <h3 id="modal-title">Сообщение</h3>
-            <p id="modal-text"></p>
-            <button class="btn btn-primary" id="btn-modal-close">Ок</button>
+        <div class="section-head"><div><span>Возможности</span><h2>Всё под рукой</h2></div></div>
+        <div class="action-grid">
+          <button class="action-card" data-nav="subscription"><span class="action-icon cyan"><svg><use href="#i-shield"/></svg></span><b>Моя подписка</b><small>Срок и устройства</small></button>
+          <button class="action-card" data-nav="tariffs"><span class="action-icon purple"><svg><use href="#i-card"/></svg></span><b>Продлить доступ</b><small>Тарифы и оплата</small></button>
+          <button class="action-card" data-nav="bonus"><span class="action-icon gold"><svg><use href="#i-gift"/></svg></span><b>Получать бонусы</b><small>30% с приглашений</small></button>
+          <button class="action-card" data-nav="support"><span class="action-icon blue"><svg><use href="#i-help"/></svg></span><b>Нужна помощь</b><small>Ответим и поможем</small></button>
         </div>
-    </div>
+        <div class="trust-strip"><span><svg><use href="#i-lock"/></svg></span><div><b>Приватность по умолчанию</b><small>Мы не храним историю посещённых сайтов</small></div></div>
+      </section>
 
-    <script src="/tma/app.js"></script>
+      <section class="view" id="view-subscription" data-view="subscription">
+        <div class="page-title"><span>VPN-доступ</span><h1>Моя подписка</h1><p>Управление доступом и подключёнными устройствами.</p></div>
+        <article class="plan-card">
+          <div class="plan-card__head"><span class="plan-logo"><svg><use href="#i-shield"/></svg></span><div><small>Текущий тариф</small><h2 id="plan-name">Загрузка…</h2></div><span class="status-mini" id="plan-status">—</span></div>
+          <div class="plan-date"><svg><use href="#i-calendar"/></svg><div><span>Доступ действует до</span><b id="plan-expiry">—</b></div><strong id="plan-days">—</strong></div>
+          <div class="usage-block"><div class="usage-head"><span>Подключённые устройства</span><b id="device-usage">—</b></div><div class="usage-track"><i id="device-progress"></i></div></div>
+          <div class="plan-stats"><div><span>Трафик</span><b id="plan-traffic">Безлимит</b></div><div><span>Состояние</span><b id="plan-health">Проверяется</b></div></div>
+          <button class="primary-action compact" id="subscription-connect"><svg><use href="#i-bolt"/></svg><span>Подключить устройство</span></button>
+        </article>
+
+        <div class="section-head"><div><span>Устройства</span><h2>Активные подключения</h2></div><button class="mini-button" id="refresh-devices"><svg><use href="#i-refresh"/></svg></button></div>
+        <div class="list-card" id="devices-list"><div class="skeleton-row"></div><div class="skeleton-row"></div></div>
+
+        <div class="section-head"><div><span>Первый запуск</span><h2>Подключение за минуту</h2></div></div>
+        <div class="steps-card"><div><span>1</span><p><b>Нажмите «Подключить»</b><small>Откроется персональная страница настройки.</small></p></div><div><span>2</span><p><b>Выберите приложение</b><small>Happ или Incy — инструкция подскажет каждый шаг.</small></p></div><div><span>3</span><p><b>Импортируйте подписку</b><small>Список серверов обновится автоматически.</small></p></div></div>
+      </section>
+
+      <section class="view" id="view-tariffs" data-view="tariffs">
+        <div class="page-title"><span>Продление</span><h1>Выберите тариф</h1><p>Оплата картой или СБП. Доступ активируется автоматически.</p></div>
+        <div class="secure-note"><svg><use href="#i-lock"/></svg><div><b>Безопасная оплата через Platega</b><span>Мы не видим и не храним данные вашей карты.</span></div></div>
+        <div class="plans-list" id="plans-list"><div class="skeleton-plan"></div><div class="skeleton-plan"></div><div class="skeleton-plan"></div></div>
+        <div class="section-head"><div><span>Платежи</span><h2>Последние операции</h2></div></div>
+        <div class="list-card" id="payments-list"><div class="empty-state compact"><svg><use href="#i-card"/></svg><span>Загружаем историю…</span></div></div>
+      </section>
+
+      <section class="view" id="view-bonus" data-view="bonus">
+        <div class="page-title"><span>Партнёрская программа</span><h1>Бонусы за друзей</h1><p>Приглашайте друзей и получайте 30% с каждой их оплаты.</p></div>
+        <article class="bonus-hero"><span>Доступно к выводу</span><strong id="ref-balance">— ₽</strong><small id="withdraw-hint">Минимальная сумма вывода — 100 ₽</small><button class="light-action" id="withdraw-button">Вывести средства</button></article>
+        <div class="stats-pair"><div><span>Приглашено</span><b id="ref-count">—</b></div><div><span>Заработано</span><b id="ref-earned">— ₽</b></div></div>
+        <article class="share-card"><div class="share-card__icon"><svg><use href="#i-users"/></svg></div><h2>Ваша персональная ссылка</h2><p>Друг перейдёт по ней в бот, а вы получите бонус после его оплаты.</p><div class="copy-field"><span id="ref-link">Загрузка…</span><button id="copy-ref" aria-label="Скопировать"><svg><use href="#i-copy"/></svg></button></div><button class="primary-action compact" id="share-ref"><svg><use href="#i-users"/></svg><span>Поделиться в Telegram</span></button></article>
+        <div class="level-card"><div class="level-head"><div><span>Ваш уровень</span><b id="level-name">Старт</b></div><strong id="level-next">—</strong></div><div class="usage-track"><i id="level-progress"></i></div><small>Чем больше активных друзей, тем выше ваш партнёрский статус.</small></div>
+      </section>
+
+      <section class="view" id="view-support" data-view="support">
+        <div class="page-title"><span>Центр помощи</span><h1>Мы рядом</h1><p>Подскажем с установкой, оплатой и подключением.</p></div>
+        <article class="support-hero"><span class="support-orb"><svg><use href="#i-chat"/></svg></span><div><h2>Живая поддержка</h2><p>Обычно отвечаем в течение нескольких минут.</p></div><button class="primary-action compact" id="open-support">Написать нам</button></article>
+        <div class="section-head"><div><span>Частые вопросы</span><h2>Быстрые ответы</h2></div></div>
+        <div class="faq-list">
+          <details><summary>Как подключить VPN?<span>+</span></summary><p>Откройте вкладку «Подписка», нажмите «Подключить устройство» и следуйте персональной инструкции для Happ или Incy.</p></details>
+          <details><summary>Почему сервер не подключается?<span>+</span></summary><p>Обновите подписку в приложении и попробуйте другой сервер. Если не помогло — напишите нам, указав модель устройства.</p></details>
+          <details><summary>Как продлить доступ?<span>+</span></summary><p>На вкладке «Тарифы» выберите подходящий срок и оплатите картой или через СБП. Продление применится автоматически.</p></details>
+          <details><summary>Можно отключить старое устройство?<span>+</span></summary><p>Да. Во вкладке «Подписка» найдите устройство и нажмите «Отключить».</p></details>
+        </div>
+        <div class="legal-links"><button data-link="https://app.hamali.ru/privacy"><svg><use href="#i-lock"/></svg><span><b>Конфиденциальность</b><small>Как мы защищаем ваши данные</small></span><svg><use href="#i-arrow"/></svg></button><button data-link="https://app.hamali.ru/terms"><svg><use href="#i-card"/></svg><span><b>Условия сервиса</b><small>Правила использования HamaliVPN</small></span><svg><use href="#i-arrow"/></svg></button></div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <button class="nav-button active" data-nav="home"><svg><use href="#i-home"/></svg><span>Главная</span></button>
+      <button class="nav-button" data-nav="subscription"><svg><use href="#i-shield"/></svg><span>Подписка</span></button>
+      <button class="nav-button" data-nav="tariffs"><svg><use href="#i-card"/></svg><span>Тарифы</span></button>
+      <button class="nav-button" data-nav="bonus"><svg><use href="#i-gift"/></svg><span>Бонусы</span></button>
+      <button class="nav-button" data-nav="support"><svg><use href="#i-help"/></svg><span>Помощь</span></button>
+    </nav>
+  </div>
+
+  <div class="sheet-overlay" id="sheet-overlay" aria-hidden="true"><div class="bottom-sheet" role="dialog" aria-modal="true"><i class="sheet-handle"></i><button class="sheet-close" id="sheet-close" aria-label="Закрыть">×</button><div id="sheet-content"></div></div></div>
+  <div class="toast" id="toast" aria-live="polite"></div>
+  <script src="/tma/app.js?v=2"></script>
 </body>
 </html>

@@ -1,19 +1,30 @@
 import hashlib
 import hmac
 import json
+import logging
 import urllib.parse
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
 from .db import get_session
-from .models import Customer, Subscription, WithdrawalRequest, WithdrawalStatus
+from .models import (
+    BalanceTransaction,
+    Customer,
+    PaymentStatus,
+    PaymentTransaction,
+    Subscription,
+    WithdrawalRequest,
+    WithdrawalStatus,
+)
+from .payments import PLANS, PlategaPaymentError, create_platega_link
 
 tma_router = APIRouter(prefix="/api/tma", tags=["TMA"])
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 def validate_init_data(init_data: str, bot_token: str) -> dict:
@@ -71,9 +82,16 @@ async def get_tma_user(
     return customer
 
 
+def get_display_subscription(user: Customer) -> Subscription | None:
+    active = next((item for item in user.subscriptions if item.is_active), None)
+    if active is not None:
+        return active
+    return max(user.subscriptions, key=lambda item: item.expires_at) if user.subscriptions else None
+
+
 @tma_router.get("/me")
 async def get_me(user: Customer = Depends(get_tma_user)):
-    sub = user.subscriptions[0] if user.subscriptions else None
+    sub = get_display_subscription(user)
 
     if sub:
         expire_at = int(sub.expires_at.timestamp()) if sub.expires_at else None
@@ -96,7 +114,11 @@ async def get_me(user: Customer = Depends(get_tma_user)):
     return {
         "id": user.id,
         "telegram_id": user.telegram_id,
+        "full_name": user.full_name,
+        "telegram_username": user.telegram_username,
         "status": status,
+        "plan_code": sub.plan_code if sub else None,
+        "plan_name": PLANS.get(sub.plan_code, {}).get("name", sub.plan_code) if sub else None,
         "expire_at": expire_at,
         "used_traffic": used_traffic,
         "data_limit": data_limit,
@@ -104,12 +126,105 @@ async def get_me(user: Customer = Depends(get_tma_user)):
         "device_limit": limit,
         "connect_url": connect_url,
         "raw_url": raw_url if "raw_url" in locals() else None,
+        "health_status": sub.health_status if sub else "unknown",
+        "balance_rub": user.balance_rub,
+        "bot_username": settings.bot_username,
+        "support_username": settings.support_username,
+        "payment_available": bool(
+            settings.platega_merchant_id.strip()
+            and settings.platega_api_key.get_secret_value().strip()
+        ),
     }
+
+
+@tma_router.get("/plans")
+async def get_plans(user: Customer = Depends(get_tma_user)):  # noqa: ARG001
+    return [
+        {
+            "code": code,
+            "name": plan["name"],
+            "price": plan["price"],
+            "days": plan["days"],
+            "devices": plan["devices"],
+            "popular": code == "6_months",
+        }
+        for code, plan in PLANS.items()
+    ]
+
+
+@tma_router.get("/payments")
+async def get_payments(
+    user: Customer = Depends(get_tma_user), db: AsyncSession = Depends(get_session)
+):
+    result = await db.execute(
+        select(PaymentTransaction)
+        .where(PaymentTransaction.customer_id == user.id)
+        .order_by(PaymentTransaction.created_at.desc())
+        .limit(12)
+    )
+    return [
+        {
+            "id": payment.id,
+            "amount": payment.amount,
+            "status": payment.status.value,
+            "provider": payment.provider,
+            "plan_code": payment.payload,
+            "plan_name": PLANS.get(payment.payload or "", {}).get("name", payment.payload),
+            "created_at": payment.created_at.isoformat(),
+        }
+        for payment in result.scalars().all()
+    ]
+
+
+@tma_router.post("/payments/{plan_code}")
+async def create_tma_payment(
+    plan_code: str,
+    user: Customer = Depends(get_tma_user),
+    db: AsyncSession = Depends(get_session),
+):
+    plan = PLANS.get(plan_code)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Тариф не найден")
+    if not (
+        settings.platega_merchant_id.strip()
+        and settings.platega_api_key.get_secret_value().strip()
+    ):
+        raise HTTPException(status_code=503, detail="Оплата временно недоступна")
+
+    transaction = PaymentTransaction(
+        customer_id=user.id,
+        amount=plan["price"],
+        currency="RUB",
+        provider="platega",
+        payload=plan_code,
+        status=PaymentStatus.pending,
+    )
+    db.add(transaction)
+    await db.flush()
+    try:
+        payment = await create_platega_link(
+            order_id=transaction.id,
+            amount=plan["price"],
+            description=f"HamaliVPN · {plan['name']}",
+            telegram_id=user.telegram_id,
+            username=user.telegram_username,
+        )
+    except PlategaPaymentError as exc:
+        transaction.status = PaymentStatus.cancelled
+        await db.commit()
+        logger.exception("Could not create TMA Platega payment")
+        raise HTTPException(
+            status_code=502, detail="Не получилось создать платёж. Попробуйте ещё раз."
+        ) from exc
+
+    transaction.external_id = payment["transactionId"]
+    await db.commit()
+    return {"url": payment["url"], "transaction_id": transaction.id}
 
 
 @tma_router.get("/devices")
 async def get_devices(user: Customer = Depends(get_tma_user)):
-    sub = user.subscriptions[0] if user.subscriptions else None
+    sub = get_display_subscription(user)
     if not sub:
         return []
 
@@ -130,7 +245,7 @@ async def get_devices(user: Customer = Depends(get_tma_user)):
 async def delete_device(
     device_id: int, user: Customer = Depends(get_tma_user), db: AsyncSession = Depends(get_session)
 ):
-    sub = user.subscriptions[0] if user.subscriptions else None
+    sub = get_display_subscription(user)
     if not sub:
         raise HTTPException(status_code=404, detail="No subscription")
 
@@ -151,13 +266,29 @@ async def get_referrals(
     result = await db.execute(select(Customer).where(Customer.referrer_id == user.id))
     referrals = result.scalars().all()
 
-    # Calculate earned from balance transactions (assuming 'referral_bonus' type)
-    # Since we don't have the exact logic without looking deep, we will just return the balance
+    earned_result = await db.execute(
+        select(func.coalesce(func.sum(BalanceTransaction.amount), 0)).where(
+            BalanceTransaction.customer_id == user.id,
+            BalanceTransaction.type == "referral_bonus",
+        )
+    )
+    pending_result = await db.execute(
+        select(WithdrawalRequest).where(
+            WithdrawalRequest.customer_id == user.id,
+            WithdrawalRequest.status == WithdrawalStatus.pending,
+        )
+    )
+    pending = pending_result.scalars().first()
     return {
         "balance": user.balance_rub,
         "total_referrals": len(referrals),
-        "total_earned": user.balance_rub,  # simplified for now
-        "bot_username": settings.bot_username if hasattr(settings, "bot_username") else "vpn_bot",
+        "total_earned": int(earned_result.scalar_one() or 0),
+        "commission_percent": 30,
+        "minimum_withdrawal": 100,
+        "pending_withdrawal": (
+            {"amount": pending.amount, "status": pending.status.value} if pending else None
+        ),
+        "bot_username": settings.bot_username,
     }
 
 
