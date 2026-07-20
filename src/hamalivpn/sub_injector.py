@@ -447,6 +447,16 @@ def incy_integrated_configs(items):
     return configs
 
 
+def integrated_json_configs_from_payload(payload):
+    """Build client JSON configs while applying administrator display names."""
+
+    payload = payload if isinstance(payload, dict) else {}
+    items = payload.get("items") or [
+        {"raw_link": raw_link} for raw_link in payload.get("nodes", [])
+    ]
+    return incy_integrated_configs(items)
+
+
 def incy_whitelist_routing_link():
     """INCY routing equivalent of Happ's selectable «Белые списки» config."""
 
@@ -782,10 +792,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                     )
                     with urllib.request.urlopen(request, timeout=5) as response:
                         payload = json.loads(response.read().decode("utf-8"))
-                    items = payload.get("items") or [
-                        {"raw_link": link} for link in payload.get("nodes", [])
-                    ]
-                    configs = incy_integrated_configs(items)
+                    configs = integrated_json_configs_from_payload(payload)
                     body = json.dumps(configs, ensure_ascii=False, separators=(",", ":")).encode(
                         "utf-8"
                     )
@@ -1561,20 +1568,13 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         )
                                         with urllib.request.urlopen(req_int, timeout=5) as int_res:
                                             int_data = json.loads(int_res.read().decode("utf-8"))
-                                            for node_str in int_data.get("nodes", []):
-                                                if node_str.startswith("vless://"):
-                                                    outbound_cfg = vless_to_outbound(node_str)
-                                                    if outbound_cfg:
-                                                        _all.append(outbound_cfg)
-                                                else:
-                                                    try:
-                                                        _all.append(json.loads(node_str))
-                                                    except (
-                                                        TypeError,
-                                                        ValueError,
-                                                        json.JSONDecodeError,
-                                                    ):
-                                                        pass
+                                            # Build fresh client configs and override only
+                                            # `remarks` with the administrator's display_name.
+                                            # The stored transport/routing document remains
+                                            # immutable and source refreshes keep custom names.
+                                            _all.extend(
+                                                integrated_json_configs_from_payload(int_data)
+                                            )
                                     except Exception as e:
                                         print("Error fetching integrated nodes for JSON:", e)
 

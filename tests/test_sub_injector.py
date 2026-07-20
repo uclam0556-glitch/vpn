@@ -12,6 +12,7 @@ from hamalivpn.sub_injector import (
     incy_integrated_configs,
     incy_integrated_links,
     incy_whitelist_routing_link,
+    integrated_json_configs_from_payload,
     is_incy_integrated_request,
     is_incy_request,
     reality_share_link,
@@ -277,6 +278,42 @@ def test_incy_integrated_subscription_preserves_full_xray_config() -> None:
     assert configs[0]["remarks"] == "Франция · интеграция"
     assert configs[0]["dns"] == source["dns"]
     assert configs[0]["routing"] == source["routing"]
+    assert configs[0]["outbounds"] == source["outbounds"]
+    assert source == original
+
+
+def test_integrated_json_payload_applies_custom_name_without_mutating_transport() -> None:
+    source = {
+        "remarks": "Provider internal name",
+        "outbounds": [
+            {
+                "protocol": "vless",
+                "tag": "proxy",
+                "streamSettings": {
+                    "network": "xhttp",
+                    "security": "tls",
+                    "xhttpSettings": {"path": "/secret", "extra": {"xmux": {"max": 8}}},
+                },
+            }
+        ],
+    }
+    original = json.loads(json.dumps(source))
+
+    configs = integrated_json_configs_from_payload(
+        {
+            "nodes": [json.dumps(source)],
+            "items": [
+                {
+                    "raw_link": json.dumps(source),
+                    "original_name": "Provider internal name",
+                    "display_name": "Моё название 🚀",
+                }
+            ],
+        }
+    )
+
+    assert len(configs) == 1
+    assert configs[0]["remarks"] == "Моё название 🚀"
     assert configs[0]["outbounds"] == source["outbounds"]
     assert source == original
 

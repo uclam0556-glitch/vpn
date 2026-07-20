@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import copy
+import html
 import ipaddress
 import json
 import random
@@ -995,7 +996,7 @@ async def nodes_rename_prompt(cb: CallbackQuery, state: FSMContext) -> None:
 
     prompt = await cb.message.answer(
         f"✏️ Введите новое имя для сервера:\n\n"
-        f"Текущее: <b>{current_name}</b>\n\n"
+        f"Текущее: <b>{html.escape(current_name)}</b>\n\n"
         f"<i>Просто отправьте новое имя текстом.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=ForceReply(selective=True),
@@ -1015,15 +1016,20 @@ async def nodes_rename_prompt(cb: CallbackQuery, state: FSMContext) -> None:
 @integration_router.message(NodesState.waiting_for_rename)
 async def nodes_rename_apply(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    new_name = message.text.strip()[:200]
+    new_name = " ".join(str(message.text or "").split())[:200]
+    if not new_name:
+        await message.answer("❌ Имя не может быть пустым. Отправьте новое название текстом.")
+        return
     node_id = data.get("node_id")
     page = data.get("page", 0)
+    saved = False
 
     async with SessionFactory() as session:
         node = await session.get(IntegrationNode, node_id)
         if node:
             node.display_name = new_name
             await session.commit()
+            saved = True
 
         if data.get("is_global"):
             text, markup = await _nodes_global_active_keyboard(session, page)
@@ -1051,6 +1057,14 @@ async def nodes_rename_apply(message: Message, state: FSMContext) -> None:
         pass
 
     await state.clear()
+    if saved:
+        await message.answer(
+            f"✅ Название сохранено: <b>{html.escape(new_name)}</b>\n"
+            "Обновите подписку в Happ/Incy — новое имя появится без изменения VPN-конфигурации.",
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await message.answer("❌ Сервер не найден. Откройте /nodes и повторите.")
 
 
 @integration_router.callback_query(
@@ -1218,7 +1232,7 @@ async def nodes_grename_prompt(cb: CallbackQuery, state: FSMContext) -> None:
 
     prompt = await cb.message.answer(
         f"✏️ Введите новое имя для сервера:\n\n"
-        f"Текущее: <b>{current_name}</b>\n\n"
+        f"Текущее: <b>{html.escape(current_name)}</b>\n\n"
         f"<i>Просто отправьте новое имя текстом.</i>",
         parse_mode=ParseMode.HTML,
         reply_markup=ForceReply(selective=True),
