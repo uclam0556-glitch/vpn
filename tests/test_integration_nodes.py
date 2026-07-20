@@ -1,6 +1,7 @@
 import base64
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -10,6 +11,7 @@ from hamalivpn.api import app, get_session
 from hamalivpn.integration import (
     _compact_node_name,
     _ensure_public_subscription_url,
+    _unique_server_nodes,
     clean_node_display_name,
     parse_node_address,
     parse_subscription_content,
@@ -166,6 +168,40 @@ def test_parse_node_address() -> None:
     }
     assert parse_node_address(json.dumps(full_profile)) == ("primary.example.com", 443)
     assert parse_node_address("not-a-node") == (None, None)
+
+
+def test_unique_server_nodes_hides_native_duplicates_and_prefers_active() -> None:
+    inactive = SimpleNamespace(
+        id=1,
+        raw_link="vless://uuid-1@example.com:443?security=reality&type=tcp#First",
+        is_active=False,
+    )
+    active_duplicate = SimpleNamespace(
+        id=2,
+        raw_link="vless://uuid-2@example.com:443?type=tcp&security=reality#Second",
+        is_active=True,
+    )
+    distinct_transport = SimpleNamespace(
+        id=3,
+        raw_link="vless://uuid-3@example.com:443?security=tls&type=xhttp&path=%2Fapi#Third",
+        is_active=False,
+    )
+    json_profile_a = SimpleNamespace(
+        id=4,
+        raw_link=json.dumps({"remarks": "A", "routing": {"rules": []}}),
+        is_active=False,
+    )
+    json_profile_b = SimpleNamespace(
+        id=5,
+        raw_link=json.dumps({"remarks": "B", "routing": {"rules": []}}),
+        is_active=False,
+    )
+
+    unique = _unique_server_nodes(
+        [inactive, active_duplicate, distinct_transport, json_profile_a, json_profile_b]
+    )
+
+    assert [node.id for node in unique] == [2, 3, 4, 5]
 
 
 @pytest.mark.asyncio

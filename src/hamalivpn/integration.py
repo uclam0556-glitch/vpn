@@ -45,8 +45,11 @@ class NodesState(StatesGroup):
 integration_router = Router()
 MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 MAX_SUBSCRIPTION_REDIRECTS = 5
+NODE_PING_CACHE_SECONDS = 60.0
+NODE_PING_CONCURRENCY = 32
 _RESERVE_PREFIX_RE = re.compile(r"^\s*\[\s*резерв\s*\]\s*", re.IGNORECASE)
 _COUNTRY_FLAG_RE = re.compile(r"[\U0001F1E6-\U0001F1FF]{2}")
+_NODE_PING_CACHE: dict[tuple[str, int], tuple[float, float | None]] = {}
 
 
 def _profile_name(config: dict, fallback: str) -> str:
@@ -641,6 +644,87 @@ def parse_node_address(raw_link: str) -> tuple[str, int] | tuple[None, None]:
     return None, None
 
 
+def _node_server_key(raw_link: str) -> str:
+    """Group native links that target the same effective VPN server.
+
+    Credentials and display fragments do not make a server unique. Transport,
+    TLS/Reality and path parameters do. Full JSON profiles remain independent
+    because their routing and DNS documents can intentionally differ even when
+    they share a primary endpoint.
+    """
+
+    value = str(raw_link or "").strip()
+    if value.startswith(("{", "[")):
+        return "json:" + value
+    if value.startswith("vmess://"):
+        try:
+            payload = value[8:] + "=" * ((4 - len(value[8:]) % 4) % 4)
+            data = json.loads(base64.b64decode(payload).decode("utf-8"))
+            fields = (
+                "add",
+                "port",
+                "net",
+                "type",
+                "tls",
+                "sni",
+                "host",
+                "path",
+                "alpn",
+                "fp",
+            )
+            return "vmess:" + json.dumps(
+                {key: data.get(key) for key in fields}, sort_keys=True, separators=(",", ":")
+            )
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            return _node_connection_key(value)
+
+    try:
+        parsed = urllib.parse.urlsplit(value)
+        if not parsed.scheme or not parsed.hostname:
+            return _node_connection_key(value)
+        query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+        transport_keys = (
+            "type",
+            "security",
+            "sni",
+            "pbk",
+            "sid",
+            "path",
+            "host",
+            "serviceName",
+            "mode",
+            "fp",
+            "alpn",
+            "obfs",
+            "peer",
+        )
+        identity = {
+            "scheme": parsed.scheme.lower(),
+            "host": parsed.hostname.casefold(),
+            "port": parsed.port,
+            "transport": {key: query.get(key) for key in transport_keys if key in query},
+        }
+        return json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    except ValueError:
+        return _node_connection_key(value)
+
+
+def _unique_server_nodes(nodes: list[IntegrationNode]) -> list[IntegrationNode]:
+    """Keep one representative per native server, preferring an active row."""
+
+    representatives: dict[str, IntegrationNode] = {}
+    order: list[str] = []
+    for node in nodes:
+        key = _node_server_key(node.raw_link)
+        current = representatives.get(key)
+        if current is None:
+            representatives[key] = node
+            order.append(key)
+        elif node.is_active and not current.is_active:
+            representatives[key] = node
+    return [representatives[key] for key in order]
+
+
 async def tcp_ping(host: str, port: int, connect_timeout: float = 1.0) -> float | None:
     if not host or not port:
         return None
@@ -654,6 +738,21 @@ async def tcp_ping(host: str, port: int, connect_timeout: float = 1.0) -> float 
         return (time.perf_counter() - start) * 1000
     except Exception:
         return None
+
+
+async def _cached_node_ping(node: IntegrationNode, semaphore: asyncio.Semaphore) -> float | None:
+    host, port = parse_node_address(node.raw_link)
+    if not host or not port:
+        return None
+    cache_key = (host.casefold(), port)
+    now = time.monotonic()
+    cached = _NODE_PING_CACHE.get(cache_key)
+    if cached and now - cached[0] < NODE_PING_CACHE_SECONDS:
+        return cached[1]
+    async with semaphore:
+        ping = await tcp_ping(host, port, connect_timeout=1.5)
+    _NODE_PING_CACHE[cache_key] = (time.monotonic(), ping)
+    return ping
 
 
 async def _nodes_links_keyboard(session) -> tuple[str, InlineKeyboardMarkup]:
@@ -721,7 +820,8 @@ async def _nodes_link_keyboard(
         .filter_by(link_id=link_id)
         .order_by(IntegrationNode.source_position, IntegrationNode.id)
     )
-    nodes = result.scalars().all()
+    stored_nodes = list(result.scalars().all())
+    nodes = _unique_server_nodes(stored_nodes)
 
     active_count = sum(1 for n in nodes if n.is_active)
 
@@ -730,13 +830,22 @@ async def _nodes_link_keyboard(
     else:
         filtered_nodes = nodes
 
-    # Keep the exact provider order, with the nodes already published to users
-    # at the top. A control-server TCP timing is useful diagnostics, but it is
-    # not the same measurement as the end user's Happ latency and must not
-    # reshuffle the provider's list.
+    semaphore = asyncio.Semaphore(NODE_PING_CONCURRENCY)
+    pings = await asyncio.gather(*(_cached_node_ping(node, semaphore) for node in filtered_nodes))
+    pings_map = {node.id: ping for node, ping in zip(filtered_nodes, pings, strict=True)}
+
+    # Published nodes stay first; the remaining unique servers are ranked by
+    # measured reachability and TCP setup time, with source order as a stable
+    # tie-breaker. Happ still measures its own device-to-server latency.
     sorted_nodes = sorted(
         filtered_nodes,
-        key=lambda node: (not node.is_active, node.source_position, node.id),
+        key=lambda node: (
+            not node.is_active,
+            pings_map[node.id] is None,
+            pings_map[node.id] if pings_map[node.id] is not None else float("inf"),
+            node.source_position,
+            node.id,
+        ),
     )
 
     PAGE_SIZE = 8
@@ -744,28 +853,16 @@ async def _nodes_link_keyboard(
     page = max(0, min(page, total_pages - 1))
     page_nodes = sorted_nodes[page * PAGE_SIZE : (page + 1) * PAGE_SIZE]
 
-    # Probe only the visible page. This keeps /nodes responsive even when a
-    # provider sends hundreds of entries.
-    ping_tasks = []
-
-    async def _none_ping():
-        return None
-
-    for node in page_nodes:
-        host, port = parse_node_address(node.raw_link)
-        if host and port:
-            ping_tasks.append(tcp_ping(host, port, connect_timeout=1.5))
-        else:
-            ping_tasks.append(_none_ping())
-
-    pings = await asyncio.gather(*ping_tasks)
-
-    pings_map = {node.id: ping for node, ping in zip(page_nodes, pings, strict=True)}
+    hidden_duplicates = len(stored_nodes) - len(nodes)
+    duplicate_line = (
+        f"Скрыто повторов одного сервера: <b>{hidden_duplicates}</b>\n" if hidden_duplicates else ""
+    )
 
     text = (
         f"📡 <b>{_short_url(link.url)}</b>\n\n"
-        f"Серверов: <b>{active_count}/{len(nodes)} активны</b>\n"
-        f"<i>Сначала включённые, затем порядок источника</i>\n"
+        f"Уникальных серверов: <b>{active_count}/{len(nodes)} активны</b>\n"
+        f"{duplicate_line}"
+        f"<i>Сначала включённые, затем быстрые доступные</i>\n"
         f"<i>TCP — проверка от панели, пинг в Happ измеряется с устройства</i>\n\n"
         "✅/❌ — вкл/выкл · ✏️ — переименовать · 🗑 — удалить"
     )
