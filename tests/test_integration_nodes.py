@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from hamalivpn.api import app, get_session
 from hamalivpn.integration import (
+    _compact_node_name,
     _ensure_public_subscription_url,
     parse_node_address,
     parse_subscription_content,
@@ -30,6 +31,13 @@ def test_parse_plain_and_base64_subscription() -> None:
     urlsafe = base64.urlsafe_b64encode(urlsafe_raw.encode()).decode().rstrip("=")
     assert "-" in urlsafe or "_" in urlsafe
     assert parse_subscription_content(urlsafe) == [{"raw_link": urlsafe_raw, "original_name": "𐀾"}]
+
+
+def test_compact_node_name_keeps_outbound_tag_visible() -> None:
+    result = _compact_node_name("[Резерв] Ультра (Белые списки LTE) Россия · youtube-4", max_len=38)
+
+    assert len(result) <= 38
+    assert result.endswith("· youtube-4")
 
 
 def test_parse_xray_json_preserves_complete_profile() -> None:

@@ -544,6 +544,21 @@ def _short_url(url: str, max_len: int = 45) -> str:
     return url if len(url) <= max_len else url[: max_len - 1] + "…"
 
 
+def _compact_node_name(value: str, max_len: int = 46) -> str:
+    """Shorten a Telegram label while keeping a differentiating outbound tag."""
+
+    name = " ".join(str(value or "").split())
+    if len(name) <= max_len:
+        return name
+    if " · " in name:
+        prefix, suffix = name.rsplit(" · ", 1)
+        suffix = suffix[:18]
+        prefix_budget = max_len - len(suffix) - 3
+        if prefix_budget >= 4:
+            return f"{prefix[: prefix_budget - 1]}… · {suffix}"
+    return name[: max_len - 1] + "…"
+
+
 def parse_node_address(raw_link: str) -> tuple[str, int] | tuple[None, None]:
     try:
         if raw_link.startswith("vmess://"):
@@ -720,8 +735,8 @@ async def _nodes_link_keyboard(
     for node in page_nodes:
         icon = "✅" if node.is_active else "❌"
         ping = pings_map[node.id]
-        ping_str = f"{int(ping)}ms" if ping is not None else "timeout"
-        name = f"{node.display_name[:20]} ({ping_str})"
+        ping_str = f"{int(ping)}ms" if ping is not None else "нет TCP"
+        name = f"{_compact_node_name(node.display_name)} ({ping_str})"
         filter_flag = 1 if only_active else 0
         keyboard.append(
             [
