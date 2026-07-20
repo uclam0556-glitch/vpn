@@ -7,6 +7,7 @@ import socket
 import string
 import time
 import urllib.parse
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 
 import httpx
@@ -40,100 +41,69 @@ class NodesState(StatesGroup):
 
 
 integration_router = Router()
+MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
+MAX_SUBSCRIPTION_REDIRECTS = 5
+
+
+def _profile_name(config: dict, fallback: str) -> str:
+    for key in ("remarks", "name", "ps", "tag"):
+        value = str(config.get(key) or "").strip()
+        if value:
+            return value[:200]
+    return fallback[:200]
+
+
+def _json_subscription_nodes(data: object) -> list[dict[str, str]]:
+    """Keep JSON profiles intact instead of flattening their routed outbounds.
+
+    A provider profile can contain several VLESS outbounds, DNS configuration,
+    routing rules and transport-specific fields. Those outbounds are cooperating
+    legs of one profile, not independent servers. Re-serializing each top-level
+    profile preserves the complete semantic document for client-specific output
+    adapters later in the subscription pipeline.
+    """
+
+    configs = data if isinstance(data, list) else [data]
+    nodes: list[dict[str, str]] = []
+    for index, config in enumerate(configs, start=1):
+        if not isinstance(config, dict):
+            continue
+        nodes.append(
+            {
+                "raw_link": json.dumps(
+                    config, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                ),
+                "original_name": _profile_name(config, f"Custom Node {index}"),
+            }
+        )
+    return nodes
 
 
 def parse_subscription_content(content: str) -> list[dict[str, str]]:
     """Parse common subscription formats without performing network I/O."""
     padded = content.strip() + "=" * ((4 - len(content.strip()) % 4) % 4)
-    try:
-        decoded = base64.b64decode(padded, validate=True).decode("utf-8")
-    except (ValueError, UnicodeDecodeError):
-        decoded = content
+    decoded = content
+    for altchars in (None, b"-_"):
+        try:
+            decoded = base64.b64decode(padded, altchars=altchars, validate=True).decode("utf-8")
+            break
+        except (ValueError, UnicodeDecodeError):
+            continue
 
     lines = [line.strip() for line in decoded.splitlines() if line.strip()]
     nodes: list[dict[str, str]] = []
 
-    # Try parsing the entire payload as a single Xray JSON first.
+    # Treat every top-level JSON object as one lossless provider profile. Never
+    # flatten its outbounds here: routing/DNS/XHTTP dependencies would be lost.
     full_text = "\n".join(lines).strip()
     if full_text.startswith(("{", "[")):
         try:
             data = json.loads(full_text)
         except json.JSONDecodeError:
             data = None
-
-        configs = data if isinstance(data, list) else [data]
-        outbounds: list[dict] = []
-        for config in configs:
-            if not isinstance(config, dict):
-                continue
-            if "outbounds" in config:
-                for outbound in config.get("outbounds", []):
-                    if not isinstance(outbound, dict):
-                        continue
-                    outbound = dict(outbound)
-                    if "remarks" in config:
-                        outbound["tag"] = config["remarks"]
-                    outbounds.append(outbound)
-            else:
-                outbounds.append(config)
-
-        for outbound in outbounds:
-            if outbound.get("protocol") != "vless":
-                continue
-            settings = outbound.get("settings", {})
-            vnext = settings.get("vnext", [])
-            if not vnext or not isinstance(vnext[0], dict):
-                continue
-            server = vnext[0]
-            users = server.get("users", [])
-            if not users or not isinstance(users[0], dict):
-                continue
-            address = server.get("address")
-            port = server.get("port")
-            uuid_value = users[0].get("id")
-            if not address or not port or not uuid_value:
-                continue
-
-            stream = outbound.get("streamSettings", {})
-            network = stream.get("network", "tcp")
-            security = stream.get("security", "none")
-            params = {"type": network, "security": security}
-            if flow := users[0].get("flow"):
-                params["flow"] = flow
-
-            if security == "reality":
-                reality = stream.get("realitySettings", {})
-                params.update(
-                    {
-                        "pbk": reality.get("publicKey", ""),
-                        "sni": reality.get("serverName", ""),
-                        "fp": reality.get("fingerprint", "chrome"),
-                        "sid": reality.get("shortId", ""),
-                        "spx": reality.get("spiderX", ""),
-                    }
-                )
-            elif security == "tls":
-                tls = stream.get("tlsSettings", {})
-                params.update(
-                    {
-                        "sni": tls.get("serverName", ""),
-                        "fp": tls.get("fingerprint", "chrome"),
-                    }
-                )
-
-            if network == "ws":
-                ws = stream.get("wsSettings", {})
-                params["path"] = ws.get("path", "/")
-                if host := ws.get("headers", {}).get("Host"):
-                    params["host"] = host
-
-            query = urllib.parse.urlencode({key: value for key, value in params.items() if value})
-            tag = str(outbound.get("tag", "Unknown Node"))[:200]
-            uri = f"vless://{uuid_value}@{address}:{port}?{query}#{urllib.parse.quote(tag)}"
-            nodes.append({"raw_link": uri, "original_name": tag})
-
-        if nodes:
-            return nodes
+        json_nodes = _json_subscription_nodes(data)
+        if json_nodes:
+            return json_nodes
 
     for line in lines:
         if line.startswith(("{", "[")):
@@ -141,25 +111,8 @@ def parse_subscription_content(content: str) -> list[dict[str, str]]:
                 data = json.loads(line)
             except json.JSONDecodeError:
                 data = None
-            if isinstance(data, list):
-                for index, item in enumerate(data):
-                    if isinstance(item, dict):
-                        nodes.append(
-                            {
-                                "raw_link": json.dumps(item),
-                                "original_name": str(item.get("remarks", f"Custom Node {index}"))[
-                                    :200
-                                ],
-                            }
-                        )
-                continue
-            if isinstance(data, dict):
-                nodes.append(
-                    {
-                        "raw_link": json.dumps(data),
-                        "original_name": str(data.get("remarks", "Custom Node"))[:200],
-                    }
-                )
+            if isinstance(data, (dict, list)):
+                nodes.extend(_json_subscription_nodes(data))
                 continue
 
         if "://" not in line:
@@ -200,7 +153,6 @@ async def _ensure_public_subscription_url(url: str) -> None:
 async def fetch_and_parse_subscription(
     url: str, hwid: str, user_agent: str
 ) -> list[dict[str, str]]:
-    await _ensure_public_subscription_url(url)
     headers = {
         "User-Agent": user_agent,
         "Accept": "*/*",
@@ -211,10 +163,120 @@ async def fetch_and_parse_subscription(
         "X-Hwid": hwid,
         "X-Ver-Os": "26.5",
     }
-    async with httpx.AsyncClient(follow_redirects=True, timeout=10.0) as client:
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-    return parse_subscription_content(response.text)
+    current_url = url
+    async with httpx.AsyncClient(follow_redirects=False, timeout=20.0) as client:
+        for redirect_count in range(MAX_SUBSCRIPTION_REDIRECTS + 1):
+            # Revalidate every redirect target. Validating only the first URL
+            # allows a public endpoint to redirect the importer into a private
+            # network (SSRF).
+            await _ensure_public_subscription_url(current_url)
+            async with client.stream("GET", current_url, headers=headers) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        response.raise_for_status()
+                    if redirect_count >= MAX_SUBSCRIPTION_REDIRECTS:
+                        raise ValueError("Слишком много перенаправлений подписки")
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+
+                response.raise_for_status()
+                if int(response.headers.get("content-length") or 0) > MAX_SUBSCRIPTION_BYTES:
+                    raise ValueError("Подписка превышает допустимый размер")
+                chunks: list[bytes] = []
+                size = 0
+                async for chunk in response.aiter_bytes():
+                    size += len(chunk)
+                    if size > MAX_SUBSCRIPTION_BYTES:
+                        raise ValueError("Подписка превышает допустимый размер")
+                    chunks.append(chunk)
+                encoding = response.encoding or "utf-8"
+                content = b"".join(chunks).decode(encoding, errors="strict")
+                return parse_subscription_content(content)
+
+    raise ValueError("Не удалось получить подписку")
+
+
+def _normalized_profile_name(value: str) -> str:
+    return " ".join(str(value or "").split()).casefold()
+
+
+async def synchronize_integration_nodes(
+    session, link_id: int, incoming_nodes: list[dict[str, str]]
+) -> dict[str, int]:
+    """Atomically mirror one provider snapshot while preserving active choices.
+
+    Exact raw profiles win. If a provider rotates connection credentials but
+    keeps a unique profile name, update that row in place so its active state and
+    administrator-defined display name survive. Rows absent from the new source
+    snapshot are removed to prevent stale credentials from being published.
+    """
+
+    result = await session.execute(select(IntegrationNode).filter_by(link_id=link_id))
+    existing = list(result.scalars().all())
+    by_raw: dict[str, list[IntegrationNode]] = defaultdict(list)
+    by_name: dict[str, list[IntegrationNode]] = defaultdict(list)
+    for node in existing:
+        by_raw[node.raw_link].append(node)
+        by_name[_normalized_profile_name(node.original_name)].append(node)
+
+    clean_incoming: list[dict[str, str]] = []
+    seen_raw: set[str] = set()
+    for item in incoming_nodes:
+        raw_link = str(item.get("raw_link") or "").strip()
+        original_name = str(item.get("original_name") or "Custom Node").strip()[:200]
+        if not raw_link or raw_link in seen_raw:
+            continue
+        seen_raw.add(raw_link)
+        clean_incoming.append({"raw_link": raw_link, "original_name": original_name})
+
+    incoming_name_counts = Counter(
+        _normalized_profile_name(item["original_name"]) for item in clean_incoming
+    )
+    retained_ids: set[int] = set()
+    added = updated = 0
+
+    def available(candidates: list[IntegrationNode]) -> list[IntegrationNode]:
+        return [node for node in candidates if node.id not in retained_ids]
+
+    for item in clean_incoming:
+        raw_link = item["raw_link"]
+        original_name = item["original_name"]
+        candidates = available(by_raw.get(raw_link, []))
+        candidate = next((node for node in candidates if node.is_active), None)
+        candidate = candidate or (candidates[0] if candidates else None)
+
+        normalized_name = _normalized_profile_name(original_name)
+        if candidate is None and incoming_name_counts[normalized_name] == 1:
+            candidates = available(by_name.get(normalized_name, []))
+            candidate = next((node for node in candidates if node.is_active), None)
+            candidate = candidate or (candidates[0] if candidates else None)
+
+        if candidate is None:
+            session.add(
+                IntegrationNode(
+                    link_id=link_id,
+                    raw_link=raw_link,
+                    original_name=original_name,
+                    display_name=f"[Резерв] {original_name}",
+                )
+            )
+            added += 1
+            continue
+
+        retained_ids.add(candidate.id)
+        if candidate.raw_link != raw_link or candidate.original_name != original_name:
+            candidate.raw_link = raw_link
+            candidate.original_name = original_name
+            updated += 1
+
+    removed = 0
+    for node in existing:
+        if node.id not in retained_ids:
+            await session.delete(node)
+            removed += 1
+
+    return {"added": added, "updated": updated, "removed": removed}
 
 
 @integration_router.message(Command("integrate"))
@@ -417,22 +479,41 @@ def _short_url(url: str, max_len: int = 45) -> str:
 def parse_node_address(raw_link: str) -> tuple[str, int] | tuple[None, None]:
     try:
         if raw_link.startswith("vmess://"):
-            import base64
-            import json
-
             data = json.loads(base64.b64decode(raw_link[8:]).decode("utf-8"))
             return data.get("add"), int(data.get("port", 0))
         elif raw_link.startswith(("vless://", "trojan://", "ss://")):
-            import urllib.parse
-
             parsed = urllib.parse.urlparse(raw_link)
             if parsed.hostname and parsed.port:
                 return parsed.hostname, int(parsed.port)
         elif raw_link.startswith("{"):
-            import json
-
             data = json.loads(raw_link)
-            # Try some common keys in raw JSON
+            configured = data.get("outbounds")
+            outbounds = configured if isinstance(configured, list) else [data]
+            candidates = [
+                outbound
+                for outbound in outbounds
+                if isinstance(outbound, dict)
+                and outbound.get("protocol") in {"vless", "vmess", "trojan", "shadowsocks"}
+            ]
+            primary = next(
+                (
+                    outbound
+                    for outbound in candidates
+                    if str(outbound.get("tag") or "").strip().lower()
+                    in {"proxy", "primary", "main", "default"}
+                ),
+                candidates[0] if candidates else None,
+            )
+            if primary:
+                settings = primary.get("settings") or {}
+                servers = settings.get("vnext") or settings.get("servers") or []
+                if servers and isinstance(servers[0], dict):
+                    host = servers[0].get("address") or servers[0].get("server")
+                    port = servers[0].get("port") or servers[0].get("server_port")
+                    if host and port:
+                        return str(host), int(port)
+
+            # Also support lightweight JSON formats with top-level endpoint keys.
             host = data.get("server") or data.get("address") or data.get("add")
             port = data.get("server_port") or data.get("port")
             if host and port:
@@ -981,21 +1062,7 @@ async def nodes_resync(cb: CallbackQuery) -> None:
         return
 
     async with SessionFactory() as session:
-        # Collect existing raw_links to avoid duplicates
-        result = await session.execute(select(IntegrationNode).filter_by(link_id=link_id))
-        existing = {n.raw_link for n in result.scalars().all()}
-        added = 0
-        for n in new_nodes:
-            if n["raw_link"] not in existing:
-                session.add(
-                    IntegrationNode(
-                        link_id=link_id,
-                        raw_link=n["raw_link"],
-                        original_name=n["original_name"],
-                        display_name=f"[Резерв] {n['original_name']}",
-                    )
-                )
-                added += 1
+        changes = await synchronize_integration_nodes(session, link_id, new_nodes)
         link_obj = await session.get(IntegrationLink, link_id)
         if link_obj:
             link_obj.last_fetched_at = datetime.now(UTC)
@@ -1005,9 +1072,10 @@ async def nodes_resync(cb: CallbackQuery) -> None:
     await cb.message.edit_text(
         text
         + (
-            f"\n\n✅ Добавлено новых серверов: <b>{added}</b>"
-            if added
-            else "\n\n<i>Новых серверов не найдено.</i>"
+            "\n\n✅ Синхронизация завершена: "
+            f"добавлено <b>{changes['added']}</b>, "
+            f"обновлено <b>{changes['updated']}</b>, "
+            f"удалено устаревших <b>{changes['removed']}</b>."
         ),
         reply_markup=markup,
         parse_mode=ParseMode.HTML,

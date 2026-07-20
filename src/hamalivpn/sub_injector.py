@@ -92,8 +92,10 @@ def is_incy_request(handler):
     client = requested_client(handler)
     user_agent = handler.headers.get("User-Agent", "").strip().lower()
     client_header = handler.headers.get("x-client", "").strip().lower()
-    return client in {"incy", "incy-integrated"} or client_header == "incy" or user_agent.startswith(
-        "incy/"
+    return (
+        client in {"incy", "incy-integrated"}
+        or client_header == "incy"
+        or user_agent.startswith("incy/")
     )
 
 
@@ -322,6 +324,53 @@ def _share_link_connection_key(link):
         return link.split("#", 1)[0]
 
 
+def _deduplicate_share_links(links):
+    result = []
+    seen = set()
+    for link in links:
+        key = _share_link_connection_key(link)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(link)
+    return result
+
+
+def happ_integrated_links(items):
+    """Adapt losslessly stored provider profiles to Happ share links.
+
+    Full Xray documents remain intact in storage. Happ receives only the
+    document's primary VLESS outbound, with every representable TLS/XHTTP field
+    included. Native share links are passed through byte-for-byte.
+    """
+
+    converted = []
+    for item in items or []:
+        if isinstance(item, dict):
+            raw_link = str(item.get("raw_link") or "").strip()
+            profile_name = str(
+                item.get("display_name") or item.get("original_name") or "Integrated"
+            ).strip()
+        else:
+            raw_link = str(item or "").strip()
+            profile_name = "Integrated"
+        if not raw_link:
+            continue
+
+        if raw_link.startswith(("{", "[")):
+            try:
+                document = json.loads(raw_link)
+            except json.JSONDecodeError:
+                continue
+            configs = document if isinstance(document, list) else [document]
+            for config in configs:
+                converted.extend(_xray_vless_share_links(config, profile_name))
+        elif "://" in raw_link:
+            converted.append(raw_link)
+
+    return _deduplicate_share_links(converted)
+
+
 def incy_integrated_links(items, *, include_json=True):
     """Return native share links for integrated nodes without mutating their source data."""
 
@@ -351,15 +400,7 @@ def incy_integrated_links(items, *, include_json=True):
         elif "://" in raw_link:
             converted.append(incy_compatible_link(raw_link))
 
-    result = []
-    seen = set()
-    for link in converted:
-        key = _share_link_connection_key(link)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(link)
-    return result
+    return _deduplicate_share_links(converted)
 
 
 def incy_integrated_configs(items):
@@ -374,9 +415,7 @@ def incy_integrated_configs(items):
     for item in items or []:
         if isinstance(item, dict):
             raw_link = str(item.get("raw_link") or "").strip()
-            display_name = str(
-                item.get("display_name") or item.get("original_name") or ""
-            ).strip()
+            display_name = str(item.get("display_name") or item.get("original_name") or "").strip()
         else:
             raw_link = str(item or "").strip()
             display_name = ""
@@ -569,7 +608,11 @@ def vless_to_outbound(vless_url):
             return None
 
         query = urllib.parse.parse_qs(parsed.query)
-        tag = urllib.parse.unquote(parsed.fragment).split("?", 1)[0] if parsed.fragment else "Integrated Node"
+        tag = (
+            urllib.parse.unquote(parsed.fragment).split("?", 1)[0]
+            if parsed.fragment
+            else "Integrated Node"
+        )
 
         network = query.get("type", ["tcp"])[0]
         security = query.get("security", ["none"])[0]
@@ -743,9 +786,9 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                         {"raw_link": link} for link in payload.get("nodes", [])
                     ]
                     configs = incy_integrated_configs(items)
-                    body = json.dumps(
-                        configs, ensure_ascii=False, separators=(",", ":")
-                    ).encode("utf-8")
+                    body = json.dumps(configs, ensure_ascii=False, separators=(",", ":")).encode(
+                        "utf-8"
+                    )
                 except Exception as exc:
                     print("Error building Incy integrated subscription:", exc, file=sys.stderr)
                     self.send_response(502)
@@ -1621,6 +1664,8 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     integrated_links = incy_integrated_links(
                                         integrated_items, include_json=False
                                     )
+                                else:
+                                    integrated_links = happ_integrated_links(integrated_items)
 
                                 all_links = (
                                     smart_links

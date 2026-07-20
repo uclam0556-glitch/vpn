@@ -11,6 +11,7 @@ from hamalivpn.integration import (
     _ensure_public_subscription_url,
     parse_node_address,
     parse_subscription_content,
+    synchronize_integration_nodes,
 )
 from hamalivpn.models import IntegrationLink, IntegrationNode
 
@@ -25,8 +26,13 @@ def test_parse_plain_and_base64_subscription() -> None:
         {"raw_link": raw, "original_name": "France Reserve"}
     ]
 
+    urlsafe_raw = "vless://uuid@example.com:443?security=reality#𐀾"
+    urlsafe = base64.urlsafe_b64encode(urlsafe_raw.encode()).decode().rstrip("=")
+    assert "-" in urlsafe or "_" in urlsafe
+    assert parse_subscription_content(urlsafe) == [{"raw_link": urlsafe_raw, "original_name": "𐀾"}]
 
-def test_parse_xray_json_into_vless_uri() -> None:
+
+def test_parse_xray_json_preserves_complete_profile() -> None:
     document = {
         "remarks": "Imported France",
         "outbounds": [
@@ -59,8 +65,28 @@ def test_parse_xray_json_into_vless_uri() -> None:
 
     assert len(nodes) == 1
     assert nodes[0]["original_name"] == "Imported France"
-    assert nodes[0]["raw_link"].startswith("vless://uuid-value@vpn.example.com:443?")
-    assert "security=reality" in nodes[0]["raw_link"]
+    assert json.loads(nodes[0]["raw_link"]) == document
+
+
+def test_parse_xray_json_list_keeps_profiles_instead_of_routed_outbounds() -> None:
+    documents = [
+        {
+            "remarks": name,
+            "routing": {"rules": [{"outboundTag": "youtube"}]},
+            "outbounds": [
+                {"protocol": "vless", "tag": "proxy"},
+                {"protocol": "vless", "tag": "youtube"},
+                {"protocol": "freedom", "tag": "direct"},
+            ],
+        }
+        for name in ("Spain", "Austria")
+    ]
+
+    nodes = parse_subscription_content(json.dumps(documents))
+
+    assert [node["original_name"] for node in nodes] == ["Spain", "Austria"]
+    assert len(nodes) == 2
+    assert [json.loads(node["raw_link"]) for node in nodes] == documents
 
 
 def test_parse_node_address() -> None:
@@ -68,6 +94,37 @@ def test_parse_node_address() -> None:
         "vpn.example.com",
         8443,
     )
+    full_profile = {
+        "outbounds": [
+            {
+                "protocol": "vless",
+                "tag": "proxy",
+                "settings": {
+                    "vnext": [
+                        {
+                            "address": "primary.example.com",
+                            "port": 443,
+                            "users": [{"id": "uuid"}],
+                        }
+                    ]
+                },
+            },
+            {
+                "protocol": "vless",
+                "tag": "youtube",
+                "settings": {
+                    "vnext": [
+                        {
+                            "address": "auxiliary.example.com",
+                            "port": 8443,
+                            "users": [{"id": "uuid-2"}],
+                        }
+                    ]
+                },
+            },
+        ]
+    }
+    assert parse_node_address(json.dumps(full_profile)) == ("primary.example.com", 443)
     assert parse_node_address("not-a-node") == (None, None)
 
 
@@ -128,3 +185,65 @@ async def test_internal_nodes_endpoint_returns_only_active_nodes(session_factory
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_snapshot_sync_migrates_flattened_profiles_and_preserves_active_state(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        link = IntegrationLink(
+            url="https://provider.example/subscription",
+            hwid="0123456789abcdef",
+            user_agent="Happ/test",
+        )
+        session.add(link)
+        await session.flush()
+        session.add_all(
+            [
+                IntegrationNode(
+                    link_id=link.id,
+                    raw_link=f"vless://uuid-{index}@example.com:443?type=xhttp#Austria",
+                    original_name="Austria",
+                    display_name="Австрия — резерв" if index == 2 else "[Резерв] Austria",
+                    is_active=index == 2,
+                )
+                for index in range(3)
+            ]
+            + [
+                IntegrationNode(
+                    link_id=link.id,
+                    raw_link="vless://spain@example.com:443?type=xhttp#Spain",
+                    original_name="Spain",
+                    display_name="Испания",
+                    is_active=True,
+                )
+            ]
+        )
+        await session.commit()
+
+        incoming = [
+            {
+                "raw_link": json.dumps(
+                    {"remarks": name, "outbounds": [{"protocol": "vless", "tag": "proxy"}]}
+                ),
+                "original_name": name,
+            }
+            for name in ("Austria", "Spain")
+        ]
+        changes = await synchronize_integration_nodes(session, link.id, incoming)
+        await session.commit()
+
+        result = await session.execute(
+            IntegrationNode.__table__.select()
+            .where(IntegrationNode.link_id == link.id)
+            .order_by(IntegrationNode.original_name)
+        )
+        rows = result.mappings().all()
+
+    assert changes == {"added": 0, "updated": 2, "removed": 2}
+    assert len(rows) == 2
+    assert all(row["is_active"] for row in rows)
+    assert rows[0]["display_name"] == "Австрия — резерв"
+    assert rows[1]["display_name"] == "Испания"
+    assert all(row["raw_link"].startswith("{") for row in rows)

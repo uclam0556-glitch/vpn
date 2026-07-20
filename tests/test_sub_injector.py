@@ -7,6 +7,7 @@ from hamalivpn.sub_injector import (
     INCY_PROFILE_HEADERS,
     STANDALONE_CLUSTER_TAGS,
     extract_subscription_token,
+    happ_integrated_links,
     incy_compatible_link,
     incy_integrated_configs,
     incy_integrated_links,
@@ -144,6 +145,84 @@ def test_incy_flattens_integrated_xray_json_without_mutating_source() -> None:
     )
     assert "auxiliary.example.com" not in links[0]
     assert config == original
+
+
+def test_happ_uses_primary_xhttp_outbound_with_complete_transport() -> None:
+    config = {
+        "remarks": "Provider Spain",
+        "routing": {"rules": [{"outboundTag": "youtube"}]},
+        "outbounds": [
+            {
+                "tag": "proxy",
+                "protocol": "vless",
+                "settings": {
+                    "vnext": [
+                        {
+                            "address": "primary.example.com",
+                            "port": 443,
+                            "users": [{"id": "primary-uuid", "encryption": "none"}],
+                        }
+                    ]
+                },
+                "streamSettings": {
+                    "network": "xhttp",
+                    "security": "tls",
+                    "tlsSettings": {
+                        "serverName": "front.example.com",
+                        "fingerprint": "chrome",
+                        "alpn": ["h2", "http/1.1"],
+                    },
+                    "xhttpSettings": {
+                        "path": "/tunnel",
+                        "host": "front.example.com",
+                        "mode": "auto",
+                        "extra": {"xmux": {"maxConcurrency": "8-16"}},
+                    },
+                },
+            },
+            {
+                "tag": "youtube",
+                "protocol": "vless",
+                "settings": {
+                    "vnext": [
+                        {
+                            "address": "auxiliary.example.com",
+                            "port": 443,
+                            "users": [{"id": "auxiliary-uuid"}],
+                        }
+                    ]
+                },
+                "streamSettings": {"network": "xhttp", "security": "tls"},
+            },
+        ],
+    }
+
+    links = happ_integrated_links(
+        [
+            {"raw_link": json.dumps(config), "display_name": "Испания · интеграция"},
+            {
+                "raw_link": "vless://native@example.com:443?type=tcp&security=reality#Native",
+                "display_name": "Native",
+            },
+        ]
+    )
+
+    assert len(links) == 2
+    parsed = urllib.parse.urlsplit(links[0])
+    params = urllib.parse.parse_qs(parsed.query)
+    assert parsed.hostname == "primary.example.com"
+    assert params["type"] == ["xhttp"]
+    assert params["security"] == ["tls"]
+    assert params["path"] == ["/tunnel"]
+    assert params["host"] == ["front.example.com"]
+    assert params["mode"] == ["auto"]
+    assert params["alpn"] == ["h2,http/1.1"]
+    assert (
+        json.loads(params["extra"][0])
+        == config["outbounds"][0]["streamSettings"]["xhttpSettings"]["extra"]
+    )
+    assert "auxiliary.example.com" not in links[0]
+    assert links[1].startswith("vless://native@example.com:443?")
 
 
 def test_incy_integrated_links_deduplicate_connections_and_normalize_hysteria() -> None:
