@@ -13,6 +13,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -83,6 +84,14 @@ class Subscription(Base):
     access_token: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     device_limit: Mapped[int] = mapped_column(Integer, default=1)
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
+    reseller_batch_id: Mapped[str | None] = mapped_column(
+        ForeignKey("reseller_key_batches.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    reseller_seat_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reseller_assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reseller_client_telegram: Mapped[str | None] = mapped_column(String(64), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     health_status: Mapped[str] = mapped_column(String(16), default="unknown")
     health_message: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -100,6 +109,17 @@ class Subscription(Base):
     customer: Mapped[Customer] = relationship(back_populates="subscriptions")
     devices: Mapped[list["SubscriptionDevice"]] = relationship(
         back_populates="subscription", cascade="all, delete-orphan"
+    )
+    reseller_batch: Mapped["ResellerKeyBatch | None"] = relationship(
+        back_populates="subscriptions"
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "reseller_batch_id",
+            "reseller_seat_number",
+            name="uq_subscriptions_reseller_batch_seat",
+        ),
     )
 
     @property
@@ -215,6 +235,39 @@ class Tariff(Base):
     device_limit: Mapped[int] = mapped_column(Integer, default=1)
     traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ResellerKeyBatch(Base):
+    __tablename__ = "reseller_key_batches"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    reseller_id: Mapped[int] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"), index=True
+    )
+    tariff_id: Mapped[int | None] = mapped_column(
+        ForeignKey("tariffs.id", ondelete="SET NULL"), nullable=True
+    )
+    request_id: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(160))
+    total_seats: Mapped[int] = mapped_column(Integer)
+    duration_days: Mapped[int] = mapped_column(Integer)
+    price_rub: Mapped[int] = mapped_column(Integer)
+    traffic_limit_gb: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(24), default="active", server_default="active")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )
+
+    subscriptions: Mapped[list[Subscription]] = relationship(
+        back_populates="reseller_batch", order_by="Subscription.reseller_seat_number"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("reseller_id", "request_id", name="uq_reseller_batch_request"),
+    )
 
 
 class IntegrationLink(Base):

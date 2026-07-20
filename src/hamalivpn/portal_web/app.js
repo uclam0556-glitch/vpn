@@ -44,9 +44,9 @@ const clearKey = () => {
   catch (err) { /* memory fallback */ }
 };
 
-async function api(path, { method = "GET", body, authRequired = true } = {}) {
+async function api(path, { method = "GET", body, authRequired = true, timeoutMs = API_TIMEOUT_MS } = {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
     res = await fetch(`/api${path}`, {
@@ -61,7 +61,8 @@ async function api(path, { method = "GET", body, authRequired = true } = {}) {
     });
   } catch (err) {
     if (err && err.name === "AbortError") {
-      throw new Error("Портал не получил ответ от сервера за 12 секунд. Отключите проблемный VPN, обновите страницу или откройте app.hamali.ru через другую сеть.");
+      const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+      throw new Error(`Портал не получил ответ от сервера за ${seconds} секунд. Отключите проблемный VPN, обновите страницу или откройте app.hamali.ru через другую сеть.`);
     }
     throw new Error("Нет соединения с сервером портала. Проверьте сеть/VPN и попробуйте ещё раз.");
   } finally {
@@ -227,7 +228,7 @@ function tabsFor(role) {
   if (role === "super_admin") {
     return [["admin", "Обзор"], ["resellers", "Реселлеры"], ["subadmins", "Субадмины"], ["tariffs", "Тарифы"], ["referrals", "Рефералы"], ["allkeys", "Ключи"], ["releases", "Релизы"], ["audit", "Аудит"]];
   }
-  return [["dashboard", "Обзор"], ["buy", "Купить"], ["clients", "Клиенты"]];
+  return [["dashboard", "Обзор"], ["buy", "Купить"], ["packages", "Пакеты"], ["clients", "Клиенты"]];
 }
 
 function renderShell() {
@@ -260,7 +261,7 @@ function renderShell() {
 async function renderTab() {
   const view = document.getElementById("view");
   const map = {
-    dashboard: viewDashboard, buy: viewBuy, clients: viewClients, resellers: viewResellers,
+    dashboard: viewDashboard, buy: viewBuy, packages: viewPackages, clients: viewClients, resellers: viewResellers,
     subadmins: viewSubadmins,
     admin: viewAdminDashboard, tariffs: viewTariffs, referrals: viewAdminReferrals, allkeys: viewAllKeys,
     releases: viewFeatureFlags, audit: viewAudit,
@@ -339,36 +340,75 @@ function tariffCard(t) {
   </div>`;
 }
 function openBuyModal(t) {
+  const canSplit = Number(t.device_limit || 1) > 1;
+  const purchaseRequestId = requestId();
   modal(`
     <h3>Новый ключ</h3>
     <p class="sub">${esc(t.name)} · ${rub(t.price_rub)} · ${t.duration_days} дн.</p>
-    <div class="field"><label>Имя клиента</label><input class="input" id="bName" placeholder="напр. Иван" /></div>
-    <div class="field"><label>Telegram клиента</label><input class="input" id="bTg" placeholder="username" /></div>
-    <div class="field"><label>Телефон</label><input class="input" id="bPhone" placeholder="+7…" /></div>
+    ${canSplit ? `<div class="field"><label>Как использовать ${t.device_limit} устройств</label>
+      <div class="mode-grid">
+        <button class="mode-card is-active" type="button" data-product-mode="family">
+          <strong>Один семейный ключ</strong><span>1 клиент · до ${t.device_limit} устройств</span>
+        </button>
+        <button class="mode-card" type="button" data-product-mode="seat_pack">
+          <strong>Отдельные ключи: ${t.device_limit}</strong><span>До ${t.device_limit} клиентов · каждому по 1 устройству</span>
+        </button>
+      </div>
+    </div>` : ""}
+    <div class="field"><label id="bNameLabel">Имя клиента</label><input class="input" id="bName" placeholder="напр. Иван" /></div>
+    <div class="field" id="bContactFields"><label>Telegram клиента</label><input class="input" id="bTg" placeholder="username" />
+      <label style="margin-top:12px">Телефон</label><input class="input" id="bPhone" placeholder="+7…" /></div>
     <div class="field"><label>Заметка</label><input class="input" id="bNote" /></div>
+    <div class="pack-explain" id="bPackExplain" hidden>
+      <strong>Безопасная продажа по местам</strong>
+      <span>Персональных ссылок в пакете: ${t.device_limit}. Один покупатель не сможет занять устройства остальных. С баланса спишется ${rub(t.price_rub)} один раз за весь пакет.</span>
+    </div>
     <div class="modal__actions">
       <button class="btn btn--ghost" data-action="close">Отмена</button>
       <button class="btn btn--primary" id="bConfirm">Списать ${rub(t.price_rub)}</button>
     </div>`);
+  let productMode = "family";
+  document.querySelectorAll("[data-product-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      productMode = button.dataset.productMode;
+      document.querySelectorAll("[data-product-mode]").forEach((item) => item.classList.toggle("is-active", item === button));
+      const isPack = productMode === "seat_pack";
+      document.getElementById("bNameLabel").textContent = isPack ? "Название пакета" : "Имя клиента";
+      document.getElementById("bName").placeholder = isPack ? "напр. Пакет на июль" : "напр. Иван";
+      document.getElementById("bContactFields").hidden = isPack;
+      document.getElementById("bPackExplain").hidden = !isPack;
+    });
+  });
   document.getElementById("bConfirm").addEventListener("click", async (e) => {
     const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Создаём…";
     try {
       const r = await api("/reseller/keys/buy", { method: "POST", body: {
         tariff_id: t.id,
+        product_mode: productMode,
+        request_id: purchaseRequestId,
         client_name: document.getElementById("bName").value.trim(),
         client_telegram: document.getElementById("bTg").value.trim(),
         client_phone: document.getElementById("bPhone").value.trim(),
         note: document.getElementById("bNote").value.trim(),
-      }});
+      }, timeoutMs: productMode === "seat_pack" ? 60000 : API_TIMEOUT_MS });
       closeModal();
-      toast("Ключ создан, баланс обновлён", "ok");
-      showSubModal(r.connect_url || r.sub_url);
       state.cache.balance = ((state.cache.balance != null ? state.cache.balance : 0)) - t.price_rub;
+      if (r.product_mode === "seat_pack") {
+        toast(`${r.total_seats} отдельных ключей готовы`, "ok");
+        showBatchModal(r);
+      } else {
+        toast("Ключ создан, баланс обновлён", "ok");
+        showSubModal(r.connect_url || r.sub_url);
+      }
     } catch (err) {
       btn.disabled = false; btn.textContent = `Списать ${rub(t.price_rub)}`;
       toast(err.message, "err");
     }
   });
+}
+function requestId() {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") return window.crypto.randomUUID();
+  return `req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 function showSubModal(url) {
   modal(`
@@ -385,6 +425,107 @@ function showSubModal(url) {
     <div class="modal__actions" style="margin-top:10px">
       <button class="btn btn--ghost" data-action="close">Готово</button>
     </div>`);
+}
+
+// ── independent key packages ──────────────────────────────────────────────
+async function viewPackages(view) {
+  const packages = await api("/reseller/key-batches");
+  state.cache.packages = packages;
+  const assigned = packages.reduce((sum, item) => sum + Number(item.assigned_seats || 0), 0);
+  const free = packages.reduce((sum, item) => sum + Number(item.free_seats || 0), 0);
+  view.innerHTML = `
+    <div class="grid grid--stats">
+      <div class="card stat"><div class="stat__label">Пакеты</div><div class="stat__value">${packages.length}</div></div>
+      <div class="card stat"><div class="stat__label">Выдано клиентам</div><div class="stat__value accent">${assigned}</div></div>
+      <div class="card stat"><div class="stat__label">Свободные ключи</div><div class="stat__value">${free}</div></div>
+    </div>
+    <div class="section-title"><div><h2>Отдельные ключи</h2>
+      <div class="muted" style="font-size:12.5px;margin-top:4px">Каждая ссылка рассчитана строго на одного клиента и одно устройство</div></div></div>
+    <div class="rows">
+      ${packages.length ? packages.map(packageRow).join("")
+        : `<div class="empty">Пакетов пока нет.<br><span class="muted">На вкладке «Купить» выберите тариф и режим «отдельные ключи».</span></div>`}
+    </div>`;
+}
+
+function packageRow(batch) {
+  const complete = Number(batch.free_seats || 0) === 0;
+  return `<div class="row row--clickable" data-batch='${esc(JSON.stringify(batch))}'>
+    <div class="row__main">
+      <div class="row__title">${esc(batch.name)} <span class="tag tag--${complete ? "active" : "pending"}">${batch.assigned_seats}/${batch.total_seats} выдано</span></div>
+      <div class="row__meta">до ${fmtDate(batch.expires_at)} · ${rub(batch.price_rub)} за пакет · по 1 устройству</div>
+      <div class="seat-progress"><span style="width:${Math.min(100, Math.round((Number(batch.assigned_seats || 0) / Math.max(1, Number(batch.total_seats || 1))) * 100))}%"></span></div>
+    </div>
+    <div class="row__actions"><button class="btn btn--sm" data-batch='${esc(JSON.stringify(batch))}'>Управлять</button></div>
+  </div>`;
+}
+
+function showBatchModal(batch) {
+  const seats = batch.seats || [];
+  modal(`
+    <h3>${esc(batch.name)}</h3>
+    <p class="sub">${batch.assigned_seats}/${batch.total_seats} выдано · ${batch.free_seats} свободно · до ${fmtDate(batch.expires_at)}</p>
+    <div class="pack-explain">
+      <strong>Одна ссылка — один покупатель</strong>
+      <span>Выдавайте каждому человеку только его ссылку. Остальные места остаются свободными и не могут быть заняты этим устройством.</span>
+    </div>
+    <div class="seat-list">
+      ${seats.map((seat) => seatRow(batch, seat)).join("")}
+    </div>
+    <div class="modal__actions"><button class="btn btn--ghost" data-action="close">Закрыть</button></div>`);
+}
+
+function seatRow(batch, seat) {
+  const details = esc(JSON.stringify({ batchId: batch.id, batch, seat }));
+  const title = seat.assigned ? (seat.client_name || `Клиент ${seat.seat_number}`) : `Место ${seat.seat_number}`;
+  return `<div class="seat-item">
+    <div class="seat-number">${seat.seat_number}</div>
+    <div class="seat-main"><strong>${esc(title)}</strong>
+      <span>${seat.assigned ? `${seat.client_telegram ? "@" + esc(seat.client_telegram) + " · " : ""}выдан ${fmtDate(seat.assigned_at)}` : "Свободный ключ · 1 устройство"}</span></div>
+    <div class="seat-actions">
+      ${seat.assigned && seat.connect_url ? `<button class="btn btn--sm" data-copy="${esc(seat.connect_url)}">Ссылка</button>` : ""}
+      <button class="btn btn--sm ${seat.assigned ? "" : "btn--primary"}" data-seat='${details}'>${seat.assigned ? "Изменить" : "Выдать"}</button>
+    </div>
+  </div>`;
+}
+
+function openAssignSeatModal(payload) {
+  const { batch, seat } = payload;
+  const wasAssigned = Boolean(seat.assigned);
+  modal(`
+    <h3>${seat.assigned ? "Изменить получателя" : "Выдать ключ"}</h3>
+    <p class="sub">${esc(batch.name)} · место ${seat.seat_number}/${batch.total_seats} · строго 1 устройство</p>
+    <div class="field"><label>Имя клиента</label><input class="input" id="seatName" value="${esc(seat.assigned ? seat.client_name || "" : "")}" placeholder="напр. Иван" /></div>
+    <div class="field"><label>Telegram клиента</label><input class="input" id="seatTg" value="${esc(seat.client_telegram || "")}" placeholder="username" /></div>
+    ${seat.assigned && seat.connect_url ? `<div class="field"><label>Ссылка клиента</label><div class="codebox">${esc(seat.connect_url)}</div></div>` : ""}
+    <div class="modal__actions">
+      <button class="btn btn--ghost" data-action="close">Отмена</button>
+      <button class="btn btn--primary" id="seatConfirm">${seat.assigned ? "Сохранить" : "Выдать и показать ссылку"}</button>
+    </div>`);
+  document.getElementById("seatConfirm").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    button.textContent = "Сохраняем…";
+    try {
+      const updated = await api(`/reseller/key-batches/${batch.id}/seats/${seat.seat_number}`, {
+        method: "PATCH",
+        body: {
+          client_name: document.getElementById("seatName").value.trim(),
+          client_telegram: document.getElementById("seatTg").value.trim(),
+        },
+      });
+      Object.assign(seat, updated);
+      const batchSeat = (batch.seats || []).find((item) => item.seat_number === seat.seat_number);
+      if (batchSeat) Object.assign(batchSeat, updated);
+      batch.assigned_seats = (batch.seats || []).filter((item) => item.assigned).length;
+      batch.free_seats = Math.max(0, batch.total_seats - batch.assigned_seats);
+      toast(wasAssigned ? "Получатель сохранён" : "Ключ выдан", "ok");
+      showBatchModal(batch);
+    } catch (err) {
+      button.disabled = false;
+      button.textContent = "Повторить";
+      toast(err.message, "err");
+    }
+  });
 }
 
 // ── clients (= keys) ───────────────────────────────────────────────────────
@@ -539,12 +680,13 @@ async function renderDeviceManager(uuid) {
     const over = Number(d.count || 0) > Number(d.device_limit || 0);
     box.innerHTML = `
       <div class="field"><label>Лимит устройств</label>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn--sm" id="devMinus" type="button">−</button>
-          <input class="input" id="devLimit" type="number" min="1" max="10" value="${d.device_limit || 1}" style="max-width:90px;text-align:center" />
-          <button class="btn btn--sm" id="devPlus" type="button">＋</button>
-          <button class="btn btn--sm btn--primary" id="devSave" type="button">Сохранить</button>
-        </div>
+        ${d.device_limit_locked ? `<div class="pack-explain"><strong>1 устройство · лимит защищён</strong><span>Это отдельное место пакета. Клиент не сможет занять другие ключи пакета.</span></div>`
+          : `<div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn--sm" id="devMinus" type="button">−</button>
+            <input class="input" id="devLimit" type="number" min="1" max="10" value="${d.device_limit || 1}" style="max-width:90px;text-align:center" />
+            <button class="btn btn--sm" id="devPlus" type="button">＋</button>
+            <button class="btn btn--sm btn--primary" id="devSave" type="button">Сохранить</button>
+          </div>`}
       </div>
       <div class="section-title" style="margin:10px 0 6px">
         <h2 style="font-size:15px">Устройства <span class="muted">${d.count || 0}/${d.device_limit || 0}</span></h2></div>
@@ -554,16 +696,18 @@ async function renderDeviceManager(uuid) {
       </div>
       ${over ? `<p class="hint" style="color:var(--danger);margin-top:8px">Устройств больше лимита — отключите лишние вручную.</p>` : ""}`;
     const inp = document.getElementById("devLimit");
-    document.getElementById("devMinus").addEventListener("click", () => { inp.value = Math.max(1, (Number(inp.value) || 1) - 1); });
-    document.getElementById("devPlus").addEventListener("click", () => { inp.value = Math.min(10, (Number(inp.value) || 1) + 1); });
-    document.getElementById("devSave").addEventListener("click", async () => {
-      const v = Math.max(1, Math.min(10, Number(inp.value) || 1));
-      try {
-        await api(`/reseller/clients/${uuid}`, { method: "PUT", body: { devices_limit: v } });
-        toast("Лимит сохранён", "ok");
-        renderDeviceManager(uuid);
-      } catch (err) { toast(err.message, "err"); }
-    });
+    if (inp) {
+      document.getElementById("devMinus").addEventListener("click", () => { inp.value = Math.max(1, (Number(inp.value) || 1) - 1); });
+      document.getElementById("devPlus").addEventListener("click", () => { inp.value = Math.min(10, (Number(inp.value) || 1) + 1); });
+      document.getElementById("devSave").addEventListener("click", async () => {
+        const v = Math.max(1, Math.min(10, Number(inp.value) || 1));
+        try {
+          await api(`/reseller/clients/${uuid}`, { method: "PUT", body: { devices_limit: v } });
+          toast("Лимит сохранён", "ok");
+          renderDeviceManager(uuid);
+        } catch (err) { toast(err.message, "err"); }
+      });
+    }
   } catch (err) { box.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
 }
 
@@ -1101,7 +1245,7 @@ function auditRow(a) {
 // ── delegation ─────────────────────────────────────────────────────────────
 document.addEventListener("click", (e) => {
   const t = e.target.closest(
-    "[data-tab],[data-action],[data-buy],[data-client],[data-copy],[data-openurl],[data-manage],[data-subadmin],[data-tariff-edit],[data-key-disable],[data-devdel]"
+    "[data-tab],[data-action],[data-buy],[data-batch],[data-seat],[data-client],[data-copy],[data-openurl],[data-manage],[data-subadmin],[data-tariff-edit],[data-key-disable],[data-devdel]"
   );
   if (!t) return;
   if (t.dataset.openurl) return window.open(t.dataset.openurl, "_blank");
@@ -1115,6 +1259,8 @@ document.addEventListener("click", (e) => {
   if (a === "add-key") return openAdminCreateKeyModal();
   if (t.dataset.copy !== undefined && t.dataset.copy !== "") return copy(t.dataset.copy, "Скопировано");
   if (t.dataset.buy) return openBuyModal(JSON.parse(t.dataset.buy));
+  if (t.dataset.seat) return openAssignSeatModal(JSON.parse(t.dataset.seat));
+  if (t.dataset.batch) return showBatchModal(JSON.parse(t.dataset.batch));
   if (t.dataset.client) return showClientModal(JSON.parse(t.dataset.client));
   if (t.dataset.manage) return openResellerManageModal(JSON.parse(t.dataset.manage));
   if (t.dataset.subadmin) return openSubadminManageModal(JSON.parse(t.dataset.subadmin));

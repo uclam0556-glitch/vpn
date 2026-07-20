@@ -539,6 +539,7 @@ from .models import (
     AuditLog,
     BalanceTransaction,
     FeatureFlag,
+    ResellerKeyBatch,
     Subscription,
     SubscriptionDevice,
     SubscriptionStatus,
@@ -558,10 +559,238 @@ from .services import (
 
 class BuyKeyRequest(BaseModel):
     tariff_id: int
+    product_mode: str = Field(default="family", pattern="^(family|seat_pack)$")
+    request_id: str = Field(default="", max_length=64)
     client_name: str = ""
     client_phone: str = ""
     client_telegram: str = ""
     note: str = ""
+
+
+class AssignBatchSeatRequest(BaseModel):
+    client_name: str = Field(default="", max_length=160)
+    client_telegram: str = Field(default="", max_length=64)
+
+
+def _batch_seat_payload(settings, sub: Subscription) -> dict:
+    return {
+        "seat_number": sub.reseller_seat_number,
+        "assigned": sub.reseller_assigned_at is not None,
+        "assigned_at": sub.reseller_assigned_at.isoformat()
+        if sub.reseller_assigned_at
+        else None,
+        "client_name": sub.customer.full_name if sub.customer else "",
+        "client_telegram": sub.reseller_client_telegram,
+        "sub_status": str(sub.status).split(".")[-1],
+        "expires_at": sub.expires_at.isoformat(),
+        "connect_url": subscription_connect_url(settings, sub),
+        "short_code": subscription_short_code(sub),
+        "remnawave_uuid": sub.remnawave_uuid,
+        "device_limit": sub.device_limit,
+    }
+
+
+def _batch_payload(settings, batch: ResellerKeyBatch) -> dict:
+    seats = sorted(
+        batch.subscriptions,
+        key=lambda sub: (sub.reseller_seat_number or 0, sub.created_at),
+    )
+    assigned = sum(sub.reseller_assigned_at is not None for sub in seats)
+    return {
+        "id": batch.id,
+        "name": batch.name,
+        "status": batch.status,
+        "tariff_id": batch.tariff_id,
+        "total_seats": batch.total_seats,
+        "assigned_seats": assigned,
+        "free_seats": max(0, batch.total_seats - assigned),
+        "duration_days": batch.duration_days,
+        "price_rub": batch.price_rub,
+        "traffic_limit_gb": batch.traffic_limit_gb,
+        "expires_at": batch.expires_at.isoformat(),
+        "created_at": batch.created_at.isoformat(),
+        "seats": [_batch_seat_payload(settings, sub) for sub in seats],
+    }
+
+
+async def _disable_remote_users(gateway, user_uuids: list[str]) -> None:
+    if not user_uuids:
+        return
+    await asyncio.gather(
+        *(gateway.disable_user(user_uuid) for user_uuid in user_uuids),
+        return_exceptions=True,
+    )
+
+
+async def _buy_reseller_seat_pack(
+    db: AsyncSession,
+    reseller: Customer,
+    tariff: Tariff,
+    req: BuyKeyRequest,
+) -> dict:
+    settings = get_settings()
+    request_id = req.request_id.strip() or secrets.token_urlsafe(24)
+    existing = (
+        (
+            await db.execute(
+                select(ResellerKeyBatch)
+                .options(
+                    selectinload(ResellerKeyBatch.subscriptions).selectinload(
+                        Subscription.customer
+                    )
+                )
+                .where(
+                    ResellerKeyBatch.reseller_id == reseller.id,
+                    ResellerKeyBatch.request_id == request_id,
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing:
+        return {"status": "ok", "product_mode": "seat_pack", **_batch_payload(settings, existing)}
+
+    if reseller.balance_rub < tariff.price_rub:
+        raise HTTPException(400, "Insufficient funds")
+
+    now = utcnow()
+    expires_at = now + timedelta(days=tariff.duration_days)
+    seat_count = max(1, min(10, int(tariff.device_limit or 1)))
+    batch_name = (req.client_name.strip() or f"Пакет {tariff.name}")[:160]
+    batch = ResellerKeyBatch(
+        reseller_id=reseller.id,
+        tariff_id=tariff.id,
+        request_id=request_id,
+        name=batch_name,
+        total_seats=seat_count,
+        duration_days=tariff.duration_days,
+        price_rub=tariff.price_rub,
+        traffic_limit_gb=tariff.traffic_limit_gb,
+        expires_at=expires_at,
+    )
+    db.add(batch)
+    await db.flush()
+
+    clients: list[Customer] = []
+    for seat_number in range(1, seat_count + 1):
+        client = Customer(
+            telegram_id=int(secrets.token_hex(6), 16),
+            full_name=f"{batch_name} · место {seat_number}",
+            referrer_id=reseller.id,
+        )
+        db.add(client)
+        clients.append(client)
+    await db.flush()
+
+    gateway = make_remnawave_gateway(settings)
+
+    async def create_remote(seat_number: int, client: Customer):
+        description = " · ".join(
+            part
+            for part in (
+                req.note.strip(),
+                f"Пакет {batch.id}, место {seat_number}/{seat_count}",
+            )
+            if part
+        )
+        return await gateway.create_user(
+            username=f"hamali_{client.id}_seat{seat_number}_{secrets.token_hex(2)}",
+            telegram_id=client.telegram_id,
+            expires_at=expires_at,
+            device_limit=1,
+            traffic_limit_bytes=tariff.traffic_limit_gb * 1024**3,
+            squads=settings.squad_uuids,
+            description=description,
+        )
+
+    results = await asyncio.gather(
+        *(create_remote(index, client) for index, client in enumerate(clients, start=1)),
+        return_exceptions=True,
+    )
+    remote_users = [result for result in results if not isinstance(result, BaseException)]
+    failures = [result for result in results if isinstance(result, BaseException)]
+    if failures:
+        await db.rollback()
+        await _disable_remote_users(gateway, [remote.uuid for remote in remote_users])
+        raise HTTPException(502, "Не удалось создать все места пакета. Списание отменено.")
+
+    subscriptions: list[Subscription] = []
+    for seat_number, (client, remote_user) in enumerate(
+        zip(clients, remote_users, strict=True), start=1
+    ):
+        sub = Subscription(
+            customer_id=client.id,
+            plan_code=f"{tariff.name} · {seat_number}/{seat_count}"[:32],
+            status=SubscriptionStatus.active,
+            remnawave_uuid=remote_user.uuid,
+            remnawave_short_uuid=remote_user.short_uuid,
+            subscription_url=remote_user.subscription_url,
+            access_token=secrets.token_urlsafe(32),
+            device_limit=1,
+            traffic_limit_gb=tariff.traffic_limit_gb,
+            reseller_batch_id=batch.id,
+            reseller_seat_number=seat_number,
+            expires_at=expires_at,
+        )
+        sub.customer = client
+        sub.reseller_batch = batch
+        db.add(sub)
+        subscriptions.append(sub)
+
+    reseller.balance_rub -= tariff.price_rub
+    db.add(
+        BalanceTransaction(
+            customer_id=reseller.id,
+            amount=-tariff.price_rub,
+            type="purchase",
+            description=f"Пакет {tariff.name}: {seat_count} отдельных ключей",
+        )
+    )
+    await _audit(
+        db,
+        reseller,
+        "reseller.key_batch.created",
+        "reseller_key_batch",
+        batch.id,
+        {
+            "tariff_id": tariff.id,
+            "tariff_name": tariff.name,
+            "seats": seat_count,
+            "amount": -tariff.price_rub,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        await _disable_remote_users(gateway, [remote.uuid for remote in remote_users])
+        raise HTTPException(500, "Пакет не сохранён. Списание отменено.") from exc
+
+    persisted_batch = (
+        (
+            await db.execute(
+                select(ResellerKeyBatch)
+                .options(
+                    selectinload(ResellerKeyBatch.subscriptions).selectinload(
+                        Subscription.customer
+                    )
+                )
+                .where(ResellerKeyBatch.id == batch.id)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not persisted_batch:
+        raise HTTPException(500, "Созданный пакет не найден")
+    return {
+        "status": "ok",
+        "product_mode": "seat_pack",
+        **_batch_payload(settings, persisted_batch),
+    }
 
 
 async def _portal_customer(user: dict, db: AsyncSession, *, lock: bool = False) -> Customer:
@@ -639,8 +868,25 @@ async def get_reseller_dashboard(
 ):
     customer = await _reseller_or_admin(user, db)
 
-    clients_count = (
-        (await db.execute(select(Customer).filter_by(referrer_id=customer.id))).scalars().all()
+    clients = (
+        (
+            await db.execute(
+                select(Customer)
+                .options(selectinload(Customer.subscriptions))
+                .filter_by(referrer_id=customer.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    clients_count = sum(
+        not client.subscriptions
+        or any(
+            subscription.reseller_batch_id is None
+            or subscription.reseller_assigned_at is not None
+            for subscription in client.subscriptions
+        )
+        for client in clients
     )
     txs = (
         (
@@ -657,7 +903,7 @@ async def get_reseller_dashboard(
 
     return {
         "balance": float(customer.balance_rub),
-        "clients_count": len(clients_count),
+        "clients_count": clients_count,
         "transactions": [
             {
                 "id": t.id,
@@ -695,11 +941,17 @@ async def get_reseller_clients(
         sub = next((s for s in c.subscriptions if str(s.status).split(".")[-1] == "active"), None)
         if not sub and c.subscriptions:
             sub = c.subscriptions[0]
+        if sub and sub.reseller_batch_id and sub.reseller_assigned_at is None:
+            continue
         res.append(
             {
                 "id": c.id,
                 "name": c.full_name,
-                "telegram_id": c.telegram_id,
+                "telegram_id": (
+                    sub.reseller_client_telegram
+                    if sub and sub.reseller_batch_id
+                    else c.telegram_username or c.telegram_id
+                ),
                 "sub_status": str(sub.status).split(".")[-1] if sub else "none",
                 "expires_at": sub.expires_at.isoformat() if sub and sub.expires_at else None,
                 "sub_url": sub.subscription_url if sub else None,
@@ -709,6 +961,9 @@ async def get_reseller_clients(
                 "short_code": subscription_short_code(sub) if sub and sub.access_token else None,
                 "remnawave_uuid": sub.remnawave_uuid if sub else None,
                 "device_limit": sub.device_limit if sub else 0,
+                "product_mode": "seat_pack" if sub and sub.reseller_batch_id else "family",
+                "batch_id": sub.reseller_batch_id if sub else None,
+                "seat_number": sub.reseller_seat_number if sub else None,
             }
         )
     return res
@@ -745,6 +1000,9 @@ async def buy_key(
     tariff = await db.get(Tariff, req.tariff_id)
     if not tariff or not tariff.is_active:
         raise HTTPException(404, "Tariff not found")
+
+    if req.product_mode == "seat_pack":
+        return await _buy_reseller_seat_pack(db, customer, tariff, req)
 
     if customer.balance_rub < tariff.price_rub:
         raise HTTPException(400, "Insufficient funds")
@@ -829,11 +1087,112 @@ async def buy_key(
     connect_url = subscription_connect_url(settings, sub)
     return {
         "status": "ok",
+        "product_mode": "family",
         "client_id": new_client.id,
         "sub_url": sub.subscription_url,
         "connect_url": connect_url,
         "short_code": subscription_short_code(sub),
     }
+
+
+@app.get("/api/reseller/key-batches")
+async def reseller_key_batches(
+    user: dict = Depends(get_portal_user), db: AsyncSession = Depends(get_session)
+):
+    reseller = await _reseller_or_admin(user, db)
+    batches = (
+        (
+            await db.execute(
+                select(ResellerKeyBatch)
+                .options(
+                    selectinload(ResellerKeyBatch.subscriptions).selectinload(
+                        Subscription.customer
+                    )
+                )
+                .where(ResellerKeyBatch.reseller_id == reseller.id)
+                .order_by(desc(ResellerKeyBatch.created_at))
+                .limit(100)
+            )
+        )
+        .scalars()
+        .unique()
+        .all()
+    )
+    settings = get_settings()
+    return [_batch_payload(settings, batch) for batch in batches]
+
+
+@app.patch("/api/reseller/key-batches/{batch_id}/seats/{seat_number}")
+async def assign_reseller_batch_seat(
+    batch_id: str,
+    seat_number: int,
+    req: AssignBatchSeatRequest,
+    user: dict = Depends(get_portal_user),
+    db: AsyncSession = Depends(get_session),
+):
+    reseller = await _reseller_or_admin(user, db)
+    batch = (
+        (
+            await db.execute(
+                select(ResellerKeyBatch)
+                .where(
+                    ResellerKeyBatch.id == batch_id,
+                    ResellerKeyBatch.reseller_id == reseller.id,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not batch:
+        raise HTTPException(404, "Пакет не найден")
+
+    sub = (
+        (
+            await db.execute(
+                select(Subscription)
+                .options(selectinload(Subscription.customer))
+                .where(
+                    Subscription.reseller_batch_id == batch.id,
+                    Subscription.reseller_seat_number == seat_number,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if not sub:
+        raise HTTPException(404, "Место не найдено")
+
+    client_name = " ".join(req.client_name.split())[:160]
+    client_telegram = req.client_telegram.strip().lstrip("@")[:64]
+    if client_name:
+        sub.customer.full_name = client_name
+    elif sub.reseller_assigned_at is None:
+        sub.customer.full_name = f"{batch.name} · место {seat_number}"
+    sub.reseller_client_telegram = client_telegram or None
+    sub.customer.telegram_username = client_telegram or None
+    first_assignment = sub.reseller_assigned_at is None
+    if first_assignment:
+        sub.reseller_assigned_at = utcnow()
+    await _audit(
+        db,
+        reseller,
+        "reseller.key_batch.seat.assigned",
+        "subscription",
+        sub.id,
+        {
+            "batch_id": batch.id,
+            "seat_number": seat_number,
+            "first_assignment": first_assignment,
+            "client_name": sub.customer.full_name,
+            "client_telegram": client_telegram or None,
+        },
+    )
+    await db.commit()
+    return {"status": "ok", **_batch_seat_payload(get_settings(), sub)}
 
 
 class AdminTopupRequest(BaseModel):
@@ -2732,6 +3091,8 @@ async def get_reseller_client_devices(
     display_devices = slot_devices if slot_devices else devices
     return {
         "device_limit": sub.device_limit,
+        "device_limit_locked": bool(sub.reseller_batch_id),
+        "product_mode": "seat_pack" if sub.reseller_batch_id else "family",
         "count": len(display_devices),
         "devices": display_devices,
         "slots": slot_devices,
@@ -2834,6 +3195,12 @@ async def update_reseller_client(
 ):
     sub, _, actor = await _client_sub_for_agent(uuid, user, db)
 
+    if sub.reseller_batch_id and req.devices_limit != 1:
+        raise HTTPException(
+            400,
+            "Отдельное место пакета закреплено за одним устройством. Изменить лимит нельзя.",
+        )
+
     settings = get_settings()
     gw = make_remnawave_gateway(settings)
     await gw.set_device_limit(uuid, req.devices_limit)
@@ -2907,16 +3274,17 @@ async def renew_reseller_client(
     new_exp = base + timedelta(days=tariff.duration_days)
 
     gw = make_remnawave_gateway(settings)
+    effective_device_limit = 1 if sub.reseller_batch_id else tariff.device_limit
     remote = await gw.update_user_access(
         user_uuid=uuid,
         expires_at=new_exp,
-        device_limit=tariff.device_limit,
+        device_limit=effective_device_limit,
         traffic_limit_bytes=tariff.traffic_limit_gb * 1024**3,
         squads=settings.squad_uuids,
     )
     prune_result = await prune_hwid_devices_to_limit(
         user_uuid=uuid,
-        device_limit=tariff.device_limit,
+        device_limit=effective_device_limit,
         list_devices=gw.list_hwid_devices,
         delete_device=gw.delete_hwid_device,
     )
@@ -2926,7 +3294,7 @@ async def renew_reseller_client(
     sub.status = SubscriptionStatus.active
     sub.plan_code = tariff.name
     sub.expires_at = new_exp
-    sub.device_limit = tariff.device_limit
+    sub.device_limit = effective_device_limit
     sub.traffic_limit_gb = tariff.traffic_limit_gb
     sub.subscription_url = remote.subscription_url
     sub.remnawave_short_uuid = remote.short_uuid
@@ -2964,7 +3332,7 @@ async def renew_reseller_client(
             "old_expires_at": old_exp,
             "new_expires_at": new_exp.isoformat(),
             "old_device_limit": old_limit,
-            "new_device_limit": tariff.device_limit,
+            "new_device_limit": effective_device_limit,
             "pruned_devices": prune_result,
             "slot_sync": slot_sync,
         },
