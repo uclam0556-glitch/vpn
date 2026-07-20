@@ -25,8 +25,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
-from sqlalchemy import case, select
-from sqlalchemy import func as sa_func
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from .config import get_settings
@@ -757,24 +756,24 @@ async def _cached_node_ping(node: IntegrationNode, semaphore: asyncio.Semaphore)
 
 async def _nodes_links_keyboard(session) -> tuple[str, InlineKeyboardMarkup]:
     """Build the top-level list of all integration links."""
-    result = await session.execute(
-        select(
-            IntegrationLink,
-            sa_func.count(IntegrationNode.id).label("total"),
-            sa_func.sum(case((IntegrationNode.is_active.is_(True), 1), else_=0)).label("active"),
-        )
-        .outerjoin(IntegrationNode, IntegrationNode.link_id == IntegrationLink.id)
-        .group_by(IntegrationLink.id)
-        .order_by(IntegrationLink.id)
+    links = list(
+        (
+            await session.scalars(
+                select(IntegrationLink)
+                .options(selectinload(IntegrationLink.nodes))
+                .order_by(IntegrationLink.id)
+            )
+        ).all()
     )
-    rows = result.all()
 
-    # Deduplicate by URL, keep only the one with the most active nodes (or most nodes total)
+    # Deduplicate by URL, and report unique effective servers rather than raw
+    # credential/name variants accumulated by older importer versions.
     seen: dict[str, tuple] = {}
-    for link, total, active in rows:
+    for link in links:
         key = link.url
-        active_n = active or 0
-        total_n = total or 0
+        unique_nodes = _unique_server_nodes(list(link.nodes))
+        active_n = sum(node.is_active for node in unique_nodes)
+        total_n = len(unique_nodes)
         if key not in seen or (active_n, total_n) > seen[key][1:]:
             seen[key] = (link, active_n, total_n)
 
