@@ -175,8 +175,8 @@ async def test_seat_assignment_and_device_limit_guard(session_factory, monkeypat
     assert client_list.json()[0]["product_mode"] == "seat_pack"
     assert client_list.json()[0]["device_limit"] == 1
     assert client_list.json()[0]["telegram_id"] == "ivan"
-    assert limit_change.status_code == 400
-    assert "одним устройством" in limit_change.json()["detail"]
+    assert limit_change.status_code == 403
+    assert "задаётся тарифом" in limit_change.json()["detail"]
 
 
 @pytest.mark.asyncio

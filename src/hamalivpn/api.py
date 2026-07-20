@@ -3195,6 +3195,12 @@ async def update_reseller_client(
 ):
     sub, _, actor = await _client_sub_for_agent(uuid, user, db)
 
+    if actor.role != "super_admin":
+        raise HTTPException(
+            403,
+            "Лимит устройств задаётся тарифом. Изменить его может только главный администратор.",
+        )
+
     if sub.reseller_batch_id and req.devices_limit != 1:
         raise HTTPException(
             400,

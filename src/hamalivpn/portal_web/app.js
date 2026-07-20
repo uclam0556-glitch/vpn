@@ -678,15 +678,17 @@ async function renderDeviceManager(uuid) {
   try {
     const d = await api(`/reseller/clients/${uuid}/devices`);
     const over = Number(d.count || 0) > Number(d.device_limit || 0);
+    const canEditLimit = state.me && state.me.role === "super_admin" && !d.device_limit_locked;
     box.innerHTML = `
       <div class="field"><label>Лимит устройств</label>
         ${d.device_limit_locked ? `<div class="pack-explain"><strong>1 устройство · лимит защищён</strong><span>Это отдельное место пакета. Клиент не сможет занять другие ключи пакета.</span></div>`
-          : `<div style="display:flex;gap:8px;align-items:center">
+          : canEditLimit ? `<div style="display:flex;gap:8px;align-items:center">
             <button class="btn btn--sm" id="devMinus" type="button">−</button>
             <input class="input" id="devLimit" type="number" min="1" max="10" value="${d.device_limit || 1}" style="max-width:90px;text-align:center" />
             <button class="btn btn--sm" id="devPlus" type="button">＋</button>
             <button class="btn btn--sm btn--primary" id="devSave" type="button">Сохранить</button>
-          </div>`}
+          </div>`
+          : `<div class="pack-explain"><strong>${d.device_limit || 1} устр. · лимит тарифа</strong><span>Количество устройств фиксировано при создании ключа. Здесь можно только отключить занятое устройство и освободить его слот.</span></div>`}
       </div>
       <div class="section-title" style="margin:10px 0 6px">
         <h2 style="font-size:15px">Устройства <span class="muted">${d.count || 0}/${d.device_limit || 0}</span></h2></div>
