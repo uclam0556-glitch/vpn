@@ -68,7 +68,7 @@ def test_parse_xray_json_preserves_complete_profile() -> None:
     assert json.loads(nodes[0]["raw_link"]) == document
 
 
-def test_parse_xray_json_list_keeps_profiles_instead_of_routed_outbounds() -> None:
+def test_parse_xray_json_list_keeps_every_outbound_as_lossless_profile() -> None:
     documents = [
         {
             "remarks": name,
@@ -84,9 +84,25 @@ def test_parse_xray_json_list_keeps_profiles_instead_of_routed_outbounds() -> No
 
     nodes = parse_subscription_content(json.dumps(documents))
 
-    assert [node["original_name"] for node in nodes] == ["Spain", "Austria"]
-    assert len(nodes) == 2
-    assert [json.loads(node["raw_link"]) for node in nodes] == documents
+    assert [node["original_name"] for node in nodes] == [
+        "Spain",
+        "Spain · youtube",
+        "Austria",
+        "Austria · youtube",
+    ]
+    assert len(nodes) == 4
+    for node in nodes:
+        profile = json.loads(node["raw_link"])
+        proxy_outbounds = [
+            outbound for outbound in profile["outbounds"] if outbound.get("protocol") == "vless"
+        ]
+        assert len(proxy_outbounds) == 1
+        assert profile["remarks"] == node["original_name"]
+        assert any(outbound.get("protocol") == "freedom" for outbound in profile["outbounds"])
+
+    youtube = json.loads(nodes[1]["raw_link"])
+    assert youtube["outbounds"][0]["tag"] == "youtube"
+    assert youtube["routing"]["rules"] == [{"outboundTag": "youtube"}]
 
 
 def test_parse_node_address() -> None:

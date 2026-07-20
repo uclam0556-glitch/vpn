@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import copy
 import ipaddress
 import json
 import random
@@ -54,13 +55,14 @@ def _profile_name(config: dict, fallback: str) -> str:
 
 
 def _json_subscription_nodes(data: object) -> list[dict[str, str]]:
-    """Keep JSON profiles intact instead of flattening their routed outbounds.
+    """Expose every proxy outbound as an independently usable JSON profile.
 
-    A provider profile can contain several VLESS outbounds, DNS configuration,
-    routing rules and transport-specific fields. Those outbounds are cooperating
-    legs of one profile, not independent servers. Re-serializing each top-level
-    profile preserves the complete semantic document for client-specific output
-    adapters later in the subscription pipeline.
+    Flattening an outbound to a share URI discards XHTTP/TLS fields. Keeping the
+    original multi-outbound document, on the other hand, makes individual nodes
+    impossible to select in /nodes. Build one self-contained JSON document per
+    proxy outbound: the selected outbound remains byte-for-field complete, while
+    non-proxy support outbounds (DNS/direct/block) and compatible routing rules
+    are retained.
     """
 
     configs = data if isinstance(data, list) else [data]
@@ -68,14 +70,80 @@ def _json_subscription_nodes(data: object) -> list[dict[str, str]]:
     for index, config in enumerate(configs, start=1):
         if not isinstance(config, dict):
             continue
-        nodes.append(
-            {
-                "raw_link": json.dumps(
-                    config, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-                ),
-                "original_name": _profile_name(config, f"Custom Node {index}"),
-            }
+        base_name = _profile_name(config, f"Custom Node {index}")
+        configured_outbounds = config.get("outbounds")
+        outbounds = configured_outbounds if isinstance(configured_outbounds, list) else []
+        proxy_protocols = {"vless", "vmess", "trojan", "shadowsocks"}
+        proxy_outbounds = [
+            outbound
+            for outbound in outbounds
+            if isinstance(outbound, dict) and outbound.get("protocol") in proxy_protocols
+        ]
+
+        if not proxy_outbounds:
+            nodes.append(
+                {
+                    "raw_link": json.dumps(
+                        config, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                    ),
+                    "original_name": base_name,
+                }
+            )
+            continue
+
+        primary = next(
+            (
+                outbound
+                for outbound in proxy_outbounds
+                if str(outbound.get("tag") or "").strip().lower()
+                in {"proxy", "primary", "main", "default"}
+            ),
+            proxy_outbounds[0],
         )
+        support_outbounds = [
+            copy.deepcopy(outbound)
+            for outbound in outbounds
+            if isinstance(outbound, dict) and outbound.get("protocol") not in proxy_protocols
+        ]
+
+        for outbound_index, outbound in enumerate(proxy_outbounds, start=1):
+            tag = str(outbound.get("tag") or f"node-{outbound_index}").strip()
+            profile_name = base_name if outbound is primary else f"{base_name} · {tag}"
+            standalone = copy.deepcopy(config)
+            standalone["remarks"] = profile_name[:200]
+            standalone["outbounds"] = [copy.deepcopy(outbound), *copy.deepcopy(support_outbounds)]
+            standalone.pop("burstObservatory", None)
+            standalone.pop("observatory", None)
+
+            routing = standalone.get("routing")
+            if isinstance(routing, dict):
+                retained_tags = {
+                    str(item.get("tag") or "")
+                    for item in standalone["outbounds"]
+                    if isinstance(item, dict)
+                }
+                routing.pop("balancers", None)
+                rules = routing.get("rules")
+                if isinstance(rules, list):
+                    routing["rules"] = [
+                        rule
+                        for rule in rules
+                        if isinstance(rule, dict)
+                        and not rule.get("balancerTag")
+                        and (
+                            not rule.get("outboundTag")
+                            or str(rule.get("outboundTag")) in retained_tags
+                        )
+                    ]
+
+            nodes.append(
+                {
+                    "raw_link": json.dumps(
+                        standalone, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                    ),
+                    "original_name": profile_name[:200],
+                }
+            )
     return nodes
 
 
@@ -93,8 +161,8 @@ def parse_subscription_content(content: str) -> list[dict[str, str]]:
     lines = [line.strip() for line in decoded.splitlines() if line.strip()]
     nodes: list[dict[str, str]] = []
 
-    # Treat every top-level JSON object as one lossless provider profile. Never
-    # flatten its outbounds here: routing/DNS/XHTTP dependencies would be lost.
+    # Turn each proxy outbound into one independently selectable lossless JSON
+    # profile. This preserves full transport settings without hiding nodes.
     full_text = "\n".join(lines).strip()
     if full_text.startswith(("{", "[")):
         try:
