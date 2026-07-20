@@ -10,8 +10,10 @@ from hamalivpn.api import app, get_session
 from hamalivpn.integration import (
     _compact_node_name,
     _ensure_public_subscription_url,
+    clean_node_display_name,
     parse_node_address,
     parse_subscription_content,
+    renamed_node_display_name,
     synchronize_integration_nodes,
 )
 from hamalivpn.models import IntegrationLink, IntegrationNode
@@ -38,6 +40,26 @@ def test_compact_node_name_keeps_outbound_tag_visible() -> None:
 
     assert len(result) <= 38
     assert result.endswith("· youtube-4")
+
+
+def test_rename_removes_reserve_prefix_and_preserves_existing_country_flag() -> None:
+    assert clean_node_display_name("  [Резерв]   Австрия 🇦🇹 ") == "Австрия 🇦🇹"
+    assert (
+        renamed_node_display_name(
+            "Моё имя",
+            original_name="🇫🇲 Анти Заглушка - 2",
+            current_name="анти заглушка Ham",
+        )
+        == "🇫🇲 Моё имя"
+    )
+    assert (
+        renamed_node_display_name(
+            "Быстрый сервер 🇺🇸",
+            original_name="Австрия 🇦🇹",
+            current_name="[Резерв] Австрия 🇦🇹",
+        )
+        == "Быстрый сервер 🇦🇹"
+    )
 
 
 def test_parse_xray_json_preserves_complete_profile() -> None:
@@ -271,3 +293,41 @@ async def test_snapshot_sync_migrates_flattened_profiles_and_preserves_active_st
     assert rows[0]["display_name"] == "Австрия — резерв"
     assert rows[1]["display_name"] == "Испания"
     assert all(row["raw_link"].startswith("{") for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_sync_creates_new_nodes_without_legacy_reserve_prefix(
+    session_factory,
+) -> None:
+    async with session_factory() as session:
+        link = IntegrationLink(
+            url="https://provider.example/new",
+            hwid="0123456789abcdef",
+            user_agent="Happ/test",
+        )
+        session.add(link)
+        await session.flush()
+
+        changes = await synchronize_integration_nodes(
+            session,
+            link.id,
+            [
+                {
+                    "raw_link": "vless://austria@example.com:443#Austria",
+                    "original_name": "Австрия 🇦🇹",
+                }
+            ],
+        )
+        await session.commit()
+        node = (
+            (
+                await session.execute(
+                    IntegrationNode.__table__.select().where(IntegrationNode.link_id == link.id)
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+    assert changes == {"added": 1, "updated": 0, "removed": 0}
+    assert node["display_name"] == "Австрия 🇦🇹"

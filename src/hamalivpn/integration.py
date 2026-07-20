@@ -5,6 +5,7 @@ import html
 import ipaddress
 import json
 import random
+import re
 import socket
 import string
 import time
@@ -45,6 +46,8 @@ class NodesState(StatesGroup):
 integration_router = Router()
 MAX_SUBSCRIPTION_BYTES = 8 * 1024 * 1024
 MAX_SUBSCRIPTION_REDIRECTS = 5
+_RESERVE_PREFIX_RE = re.compile(r"^\s*\[\s*резерв\s*\]\s*", re.IGNORECASE)
+_COUNTRY_FLAG_RE = re.compile(r"[\U0001F1E6-\U0001F1FF]{2}")
 
 
 def _profile_name(config: dict, fallback: str) -> str:
@@ -270,6 +273,39 @@ def _normalized_profile_name(value: str) -> str:
     return " ".join(str(value or "").split()).casefold()
 
 
+def clean_node_display_name(value: str) -> str:
+    """Remove the legacy category prefix without touching the actual name."""
+
+    return " ".join(_RESERVE_PREFIX_RE.sub("", str(value or "")).split())
+
+
+def renamed_node_display_name(
+    requested_name: str, *, original_name: str, current_name: str = ""
+) -> str:
+    """Change only node text while preserving its existing country flag."""
+
+    requested = clean_node_display_name(requested_name)
+    existing_flag_match = _COUNTRY_FLAG_RE.search(current_name) or _COUNTRY_FLAG_RE.search(
+        original_name
+    )
+    if not existing_flag_match:
+        return requested[:200]
+
+    flag = existing_flag_match.group(0)
+    text = " ".join(_COUNTRY_FLAG_RE.sub("", requested).split())
+    if not text:
+        return ""
+
+    placement_source = clean_node_display_name(current_name)
+    if flag not in placement_source:
+        placement_source = clean_node_display_name(original_name)
+    if placement_source.startswith(flag):
+        text = text[: 200 - len(flag) - 1]
+        return f"{flag} {text}"
+    text = text[: 200 - len(flag) - 1]
+    return f"{text} {flag}"
+
+
 async def synchronize_integration_nodes(
     session, link_id: int, incoming_nodes: list[dict[str, str]]
 ) -> dict[str, int]:
@@ -327,7 +363,7 @@ async def synchronize_integration_nodes(
                     link_id=link_id,
                     raw_link=raw_link,
                     original_name=original_name,
-                    display_name=f"[Резерв] {original_name}",
+                    display_name=original_name,
                 )
             )
             added += 1
@@ -409,7 +445,7 @@ async def start_integration(message: Message) -> None:
                 link_id=link.id,
                 raw_link=n["raw_link"],
                 original_name=n["original_name"],
-                display_name=f"[Резерв] {n['original_name']}",
+                display_name=n["original_name"],
             )
             session.add(node)
 
@@ -488,7 +524,9 @@ async def prompt_edit_name(callback_query: CallbackQuery, state: FSMContext) -> 
         node = await session.get(IntegrationNode, node_id)
         if node:
             msg = await callback_query.message.answer(
-                f"Введите новое имя для сервера:\n\nТекущее: <b>{node.display_name}</b>\n\n<i>Просто отправьте новое имя текстом.</i>",
+                "Введите новое имя для сервера:\n\n"
+                f"Текущее: <b>{html.escape(node.display_name)}</b>\n\n"
+                "<i>Просто отправьте новое имя текстом.</i>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=ForceReply(selective=True),
             )
@@ -505,11 +543,24 @@ async def prompt_edit_name(callback_query: CallbackQuery, state: FSMContext) -> 
 async def process_new_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     node_id = data.get("node_id")
-    new_name = message.text.strip()
+    requested_name = " ".join(str(message.text or "").split())[:200]
+    if not requested_name:
+        await message.answer("❌ Имя не может быть пустым. Отправьте новое название текстом.")
+        return
 
     async with SessionFactory() as session:
         node = await session.get(IntegrationNode, node_id)
         if node:
+            new_name = renamed_node_display_name(
+                requested_name,
+                original_name=node.original_name,
+                current_name=node.display_name,
+            )
+            if not new_name:
+                await message.answer(
+                    "❌ Имя не может быть пустым. Отправьте новое название текстом."
+                )
+                return
             node.display_name = new_name
             await session.commit()
 
@@ -848,8 +899,8 @@ async def _nodes_global_active_keyboard(session, page: int = 0) -> tuple[str, In
     for node in page_nodes:
         icon = "✅" if node.is_active else "❌"
         ping = pings_map[node.id]
-        ping_str = f"{int(ping)}ms" if ping is not None else "timeout"
-        name = f"{node.display_name[:20]} ({ping_str})"
+        ping_str = f"{int(ping)}ms" if ping is not None else "нет TCP"
+        name = f"{_compact_node_name(node.display_name)} ({ping_str})"
         keyboard.append(
             [
                 InlineKeyboardButton(
@@ -1016,20 +1067,32 @@ async def nodes_rename_prompt(cb: CallbackQuery, state: FSMContext) -> None:
 @integration_router.message(NodesState.waiting_for_rename)
 async def nodes_rename_apply(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
-    new_name = " ".join(str(message.text or "").split())[:200]
-    if not new_name:
+    requested_name = " ".join(str(message.text or "").split())[:200]
+    if not requested_name:
         await message.answer("❌ Имя не может быть пустым. Отправьте новое название текстом.")
         return
     node_id = data.get("node_id")
     page = data.get("page", 0)
     saved = False
+    new_name = ""
 
     async with SessionFactory() as session:
         node = await session.get(IntegrationNode, node_id)
-        if node:
-            node.display_name = new_name
-            await session.commit()
-            saved = True
+        if not node:
+            await state.clear()
+            await message.answer("❌ Сервер не найден. Откройте /nodes и повторите.")
+            return
+        new_name = renamed_node_display_name(
+            requested_name,
+            original_name=node.original_name,
+            current_name=node.display_name,
+        )
+        if not new_name:
+            await message.answer("❌ Имя не может быть пустым. Отправьте новое название текстом.")
+            return
+        node.display_name = new_name
+        await session.commit()
+        saved = True
 
         if data.get("is_global"):
             text, markup = await _nodes_global_active_keyboard(session, page)
