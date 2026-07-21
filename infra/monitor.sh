@@ -6,6 +6,7 @@ set -uo pipefail
 BASE_DIR=/opt/hamalivpn
 ADMIN_ID="${HAMALI_ADMIN_ID:-5392719643}"
 STATE="${BASE_DIR}/.monitor_state"
+BACKUP_MAX_AGE_MINUTES="${HAMALI_BACKUP_MAX_AGE_MINUTES:-1800}"
 BOT_TOKEN=$(grep -E '^BOT_TOKEN=' "${BASE_DIR}/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
 
 alert() {
@@ -34,6 +35,13 @@ tcp_up() {
   return 1
 }
 
+backup_recent() {
+  local prefix="$1"
+  find "${BASE_DIR}/backups" -maxdepth 1 -type f \
+    -name "${prefix}_*.sql.gz" -size +1024c \
+    -mmin "-${BACKUP_MAX_AGE_MINUTES}" -print -quit 2>/dev/null | grep -q .
+}
+
 problems=""
 
 # Internal APIs. The control container is intentionally not published on the host.
@@ -47,6 +55,21 @@ http_up "http://127.0.0.1:8001/health" || problems+="• portal API (8001) не 
 # Canonical systemd units.
 systemctl is-active --quiet hamali-sub-injector.service \
   || problems+="• hamali-sub-injector.service не активен"$'\n'
+
+# A green application with stale backups is not healthy. Check both the job
+# result and the artifacts so a disabled timer, failed pg_dump or empty file is
+# reported within the regular three-minute monitoring cycle.
+systemctl is-active --quiet hamalivpn-backup.timer \
+  || problems+="• таймер ежедневных резервных копий не активен"$'\n'
+backup_result=$(systemctl show hamalivpn-backup.service -p Result --value 2>/dev/null || true)
+if [ -n "$backup_result" ] && [ "$backup_result" != "success" ]; then
+  problems+="• последнее резервное копирование завершилось: ${backup_result}"$'\n'
+fi
+backup_recent hamalivpn \
+  || problems+="• резервная копия HamaliVPN старше $((BACKUP_MAX_AGE_MINUTES / 60)) ч"$'\n'
+backup_recent remnawave \
+  || problems+="• резервная копия Remnawave старше $((BACKUP_MAX_AGE_MINUTES / 60)) ч"$'\n'
+
 # Required containers. Respect their restart policies; the monitor does not create restart loops.
 containers=(
   hamalivpn-control-1 hamalivpn-bot-1 hamalivpn-maintenance-1
