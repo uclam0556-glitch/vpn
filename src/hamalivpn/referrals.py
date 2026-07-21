@@ -8,7 +8,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
     WebAppInfo,
@@ -27,6 +26,7 @@ from .models import (
     WithdrawalStatus,
 )
 from .public_urls import public_connect_base_url
+from .telegram_ui import inline_button
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -45,11 +45,11 @@ class SetupState(StatesGroup):
 def _kb(can_withdraw: bool, referral_link: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.row(
-        InlineKeyboardButton(
-            text="🚀 Открыть бонусы в Mini App",
-            web_app=WebAppInfo(
-                url=f"{public_connect_base_url(settings)}/tma/?screen=bonus"
-            ),
+        inline_button(
+            "Открыть бонусы в Mini App",
+            icon="rocket",
+            style="primary",
+            web_app=WebAppInfo(url=f"{public_connect_base_url(settings)}/tma/?screen=bonus"),
         )
     )
     share_url = (
@@ -57,13 +57,13 @@ def _kb(can_withdraw: bool, referral_link: str) -> InlineKeyboardMarkup:
         f"{quote(referral_link, safe='')}&text="
         f"{quote('Попробуй HamaliVPN — по моей ссылке тебя ждёт бонус.', safe='')}"
     )
-    b.row(InlineKeyboardButton(text="🔗 Поделиться ссылкой", url=share_url))
-    b.row(InlineKeyboardButton(text="⚙️ Реквизиты", callback_data="ref:setup"))
+    b.row(inline_button("Поделиться ссылкой", icon="link", url=share_url))
+    b.row(inline_button("Реквизиты", icon="bank", callback_data="ref:setup"))
     if can_withdraw:
-        b.row(InlineKeyboardButton(text="💸 Вывести", callback_data="ref:withdraw"))
+        b.row(inline_button("Вывести", icon="money", style="success", callback_data="ref:withdraw"))
     b.row(
-        InlineKeyboardButton(text="↻ Обновить", callback_data="menu:referrals"),
-        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
+        inline_button("Обновить", icon="refresh", callback_data="menu:referrals"),
+        inline_button("Назад", icon="home", callback_data="menu:home"),
     )
     return b.as_markup()
 
@@ -214,8 +214,8 @@ async def setup_method(callback: CallbackQuery) -> None:
     await callback.answer()
     b = InlineKeyboardBuilder()
     for code, name in METHODS.items():
-        b.row(InlineKeyboardButton(text=name, callback_data=f"ref:method:{code}"))
-    b.row(InlineKeyboardButton(text="← Назад", callback_data="menu:referrals"))
+        b.row(inline_button(name, icon="bank", callback_data=f"ref:method:{code}"))
+    b.row(inline_button("Назад", icon="home", callback_data="menu:referrals"))
     await _show(
         callback, "🏦 <b>Способ вывода</b>\n\nВыберите, куда выводить бонусы:", b.as_markup()
     )
@@ -228,7 +228,7 @@ async def setup_requisites_prompt(callback: CallbackQuery, state: FSMContext) ->
     await state.set_state(SetupState.waiting_requisites)
     await state.update_data(method=method)
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="← Отмена", callback_data="menu:referrals"))
+    b.row(inline_button("Отмена", icon="home", callback_data="menu:referrals"))
     await callback.message.edit_text(
         f"🧾 <b>{METHODS.get(method, method)}</b>\n\n"
         f"Отправьте {REQ_HINT.get(method, 'реквизиты')} одним сообщением:",
@@ -290,8 +290,12 @@ async def withdraw(callback: CallbackQuery) -> None:
     for admin_id in settings.admin_ids:
         b = InlineKeyboardBuilder()
         b.row(
-            InlineKeyboardButton(text="✅ Выплачено", callback_data=f"wd:ok:{req_id}"),
-            InlineKeyboardButton(text="❌ Отказать", callback_data=f"wd:no:{req_id}"),
+            inline_button(
+                "Выплачено", icon="check", style="success", callback_data=f"wd:ok:{req_id}"
+            ),
+            inline_button(
+                "Отказать", icon="blocked", style="danger", callback_data=f"wd:no:{req_id}"
+            ),
         )
         try:
             await callback.message.bot.send_message(
@@ -306,7 +310,7 @@ async def withdraw(callback: CallbackQuery) -> None:
         except Exception:
             pass
     b = InlineKeyboardBuilder().row(
-        InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home")
+        inline_button("Главная", icon="home", callback_data="menu:home")
     )
     await callback.message.edit_text(
         f"✅ <b>Заявка на {amount} ₽ отправлена!</b>\n\nОбычно выплата в течение 24 часов.",

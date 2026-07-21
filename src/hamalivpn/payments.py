@@ -9,7 +9,6 @@ import httpx
 from aiogram import F, Router
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
     Message,
@@ -35,6 +34,7 @@ from .models import (
 from .public_urls import public_connect_base_url
 from .remnawave import RemnawaveError, RemnawaveNotFoundError, make_remnawave_gateway
 from .services import get_latest_subscription, issue_trial
+from .telegram_ui import inline_button
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -58,29 +58,29 @@ def _mini_app_tariffs_url() -> str:
 def buy_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(
-            text="🚀 Выбрать тариф в Mini App",
+        inline_button(
+            "Выбрать тариф в Mini App",
+            icon="rocket",
+            style="primary",
             web_app=WebAppInfo(url=_mini_app_tariffs_url()),
         )
     )
     for code, plan in PLANS.items():
         builder.row(
-            InlineKeyboardButton(
-                text=f"{plan['name']} — {plan['price']} ₽",
+            inline_button(
+                f"{plan['name']} — {plan['price']} ₽",
+                icon="card",
                 callback_data=f"platega:{code}",
             )
         )
-    builder.row(InlineKeyboardButton(text="← Назад", callback_data="menu:home"))
+    builder.row(inline_button("Назад", icon="home", callback_data="menu:home"))
     return builder.as_markup()
 
 
 @router.callback_query(F.data == "menu:buy")
 async def show_buy_menu(callback: CallbackQuery) -> None:
     await callback.answer()
-    text = (
-        "💳 <b>Тарифы HamaliVPN</b>\n\n"
-        "Оплата картой или СБП. Доступ включится автоматически."
-    )
+    text = "💳 <b>Тарифы HamaliVPN</b>\n\nОплата картой или СБП. Доступ включится автоматически."
     if callback.message.photo:
         await callback.message.edit_caption(
             caption=text, reply_markup=buy_keyboard(), parse_mode="HTML"
@@ -218,8 +218,15 @@ async def process_platega_buy(callback: CallbackQuery) -> None:
             await session.commit()
 
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=f"Оплатить {plan['price']} ₽", url=payment["url"]))
-    kb.row(InlineKeyboardButton(text="← Назад к тарифам", callback_data="menu:buy"))
+    kb.row(
+        inline_button(
+            f"Оплатить {plan['price']} ₽",
+            icon="card",
+            style="success",
+            url=payment["url"],
+        )
+    )
+    kb.row(inline_button("Назад к тарифам", icon="home", callback_data="menu:buy"))
     text = (
         f"💳 <b>{plan['name']}</b>\n\n"
         f"К оплате: <b>{plan['price']} ₽</b>\n"
@@ -291,8 +298,8 @@ async def process_fk_buy(callback: CallbackQuery) -> None:
         await callback.message.answer("Оплата картой временно недоступна. Напишите в поддержку.")
         return
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=f"💳 Оплатить {plan['price']} ₽", url=link))
-    kb.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    kb.row(inline_button(f"Оплатить {plan['price']} ₽", icon="card", style="success", url=link))
+    kb.row(inline_button("Главная", icon="home", callback_data="menu:home"))
     text = (
         f"💳 <b>Оплата тарифа {plan['name']}</b>\n\n"
         f"Сумма: <b>{plan['price']} ₽</b>\n"

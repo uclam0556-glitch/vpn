@@ -16,6 +16,7 @@ from .services import (
     expire_due_subscriptions,
     subscription_connect_url,
 )
+from .telegram_ui import inline_button
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +34,27 @@ def _support_url(settings) -> str:
 
 
 def _expiry_reminder_keyboard(settings, subscription: Subscription):
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from aiogram.types import InlineKeyboardMarkup
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="💳 Продлить доступ",
+                inline_button(
+                    "Продлить доступ",
+                    icon="card",
+                    style="success",
                     callback_data="menu:buy",
                 ),
-                InlineKeyboardButton(
-                    text="📲 Подключить",
+                inline_button(
+                    "Подключить",
+                    icon="connect",
+                    style="primary",
                     url=_connect_url(settings, subscription),
                 ),
             ],
             [
-                InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
-                InlineKeyboardButton(text="💬 Поддержка", url=_support_url(settings)),
+                inline_button("Моя подписка", icon="user", callback_data="subscription:show"),
+                inline_button("Поддержка", icon="support", url=_support_url(settings)),
             ],
         ]
     )

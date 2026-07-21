@@ -2229,23 +2229,29 @@ async def _tg_send(telegram_id: int, text: str, reply_markup=None) -> None:
 
 
 def _paid_access_keyboard(subscription: Subscription):
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from aiogram.types import InlineKeyboardMarkup
+
+    from .telegram_ui import inline_button
 
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(
-                    text="📲 Подключить устройство",
+                inline_button(
+                    "Подключить устройство",
+                    icon="connect",
+                    style="success",
                     url=_connect_url(subscription),
                 )
             ],
             [
-                InlineKeyboardButton(
-                    text="👤 Моя подписка",
+                inline_button(
+                    "Моя подписка",
+                    icon="user",
                     callback_data="subscription:show",
                 ),
-                InlineKeyboardButton(
-                    text="💬 Поддержка",
+                inline_button(
+                    "Поддержка",
+                    icon="support",
                     url=f"https://t.me/{settings.support_username.lstrip('@')}",
                 ),
             ],

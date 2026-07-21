@@ -21,7 +21,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
     CallbackQuery,
     ForceReply,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
 )
@@ -31,6 +30,7 @@ from sqlalchemy.orm import selectinload
 from .config import get_settings
 from .db import SessionFactory
 from .models import Customer, IntegrationLink, IntegrationNode, Subscription
+from .telegram_ui import inline_button
 
 
 class IntegrationState(StatesGroup):
@@ -446,13 +446,15 @@ async def show_integration_menu(
 
     keyboard = []
     for node in nodes:
-        status = "✅" if node.is_active else "❌"
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=f"{status} {node.display_name}", callback_data=f"intg_toggle_{node.id}"
+                inline_button(
+                    node.display_name,
+                    icon="check" if node.is_active else "blocked",
+                    style="success" if node.is_active else "danger",
+                    callback_data=f"intg_toggle_{node.id}",
                 ),
-                InlineKeyboardButton(text="✏️", callback_data=f"intg_edit_{node.id}"),
+                inline_button("Название", icon="doc", callback_data=f"intg_edit_{node.id}"),
             ]
         )
 
@@ -783,20 +785,33 @@ async def _nodes_links_keyboard(session) -> tuple[str, InlineKeyboardMarkup]:
 
     keyboard = []
     for url, (link, active_n, total_n) in seen.items():
-        label = f"{'✅' if active_n else '❌'} {_short_url(url)} ({active_n}/{total_n})"
+        label = f"{_short_url(url)} · {active_n}/{total_n}"
         keyboard.append(
             [
-                InlineKeyboardButton(text=label, callback_data=f"nodes_link_{link.id}"),
-                InlineKeyboardButton(text="🗑", callback_data=f"nodes_del_link_{link.id}"),
+                inline_button(
+                    label,
+                    icon="check" if active_n else "blocked",
+                    style="success" if active_n else None,
+                    callback_data=f"nodes_link_{link.id}",
+                ),
+                inline_button(
+                    "Удалить",
+                    icon="blocked",
+                    style="danger",
+                    callback_data=f"nodes_del_link_{link.id}",
+                ),
             ]
         )
     keyboard.append(
-        [InlineKeyboardButton(text="🔄 Обновить список", callback_data="nodes_refresh_list")]
+        [inline_button("Обновить список", icon="refresh", callback_data="nodes_refresh_list")]
     )
     keyboard.append(
         [
-            InlineKeyboardButton(
-                text="👁 Показать все включенные серверы", callback_data="nodes_global_active_0"
+            inline_button(
+                "Все включённые серверы",
+                icon="world",
+                style="primary",
+                callback_data="nodes_global_active_0",
             )
         ]
     )
@@ -868,22 +883,28 @@ async def _nodes_link_keyboard(
 
     keyboard = []
     for node in page_nodes:
-        icon = "✅" if node.is_active else "❌"
         ping = pings_map[node.id]
         ping_str = f"{int(ping)}ms" if ping is not None else "нет TCP"
         name = f"{_compact_node_name(node.display_name)} ({ping_str})"
         filter_flag = 1 if only_active else 0
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=f"{icon} {name}",
+                inline_button(
+                    name,
+                    icon="check" if node.is_active else "blocked",
+                    style="success" if node.is_active else None,
                     callback_data=f"nodes_toggle_{node.id}_{link_id}_{page}_{filter_flag}",
                 ),
-                InlineKeyboardButton(
-                    text="✏️", callback_data=f"nodes_rename_{node.id}_{link_id}_{page}_{filter_flag}"
+                inline_button(
+                    "Имя",
+                    icon="doc",
+                    callback_data=f"nodes_rename_{node.id}_{link_id}_{page}_{filter_flag}",
                 ),
-                InlineKeyboardButton(
-                    text="🗑", callback_data=f"nodes_del_{node.id}_{link_id}_{page}_{filter_flag}"
+                inline_button(
+                    "Удалить",
+                    icon="blocked",
+                    style="danger",
+                    callback_data=f"nodes_del_{node.id}_{link_id}_{page}_{filter_flag}",
                 ),
             ]
         )
@@ -892,39 +913,38 @@ async def _nodes_link_keyboard(
     filter_flag = 1 if only_active else 0
     if page > 0:
         nav.append(
-            InlineKeyboardButton(
-                text="◀️", callback_data=f"nodes_page_{link_id}_{page - 1}_{filter_flag}"
-            )
+            inline_button("Назад", callback_data=f"nodes_page_{link_id}_{page - 1}_{filter_flag}")
         )
     if total_pages > 1:
-        nav.append(
-            InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="nodes_noop")
-        )
+        nav.append(inline_button(f"{page + 1}/{total_pages}", callback_data="nodes_noop"))
     if page < total_pages - 1:
         nav.append(
-            InlineKeyboardButton(
-                text="▶️", callback_data=f"nodes_page_{link_id}_{page + 1}_{filter_flag}"
-            )
+            inline_button("Далее", callback_data=f"nodes_page_{link_id}_{page + 1}_{filter_flag}")
         )
     if nav:
         keyboard.append(nav)
 
-    filter_text = "👁 Показать все" if only_active else "👁 Только включенные"
+    filter_text = "Показать все" if only_active else "Только включённые"
     filter_val = 0 if only_active else 1
     keyboard.append(
         [
-            InlineKeyboardButton(
-                text=filter_text, callback_data=f"nodes_filter_{link_id}_{filter_val}"
+            inline_button(
+                filter_text,
+                icon="world" if only_active else "check",
+                callback_data=f"nodes_filter_{link_id}_{filter_val}",
             )
         ]
     )
 
     keyboard.append(
         [
-            InlineKeyboardButton(
-                text="🔄 Обновить с источника", callback_data=f"nodes_resync_{link_id}"
+            inline_button(
+                "Обновить с источника",
+                icon="refresh",
+                style="primary",
+                callback_data=f"nodes_resync_{link_id}",
             ),
-            InlineKeyboardButton(text="◀️ Назад", callback_data="nodes_back_list"),
+            inline_button("Назад", icon="home", callback_data="nodes_back_list"),
         ]
     )
 
@@ -980,34 +1000,34 @@ async def _nodes_global_active_keyboard(session, page: int = 0) -> tuple[str, In
 
     keyboard = []
     for node in page_nodes:
-        icon = "✅" if node.is_active else "❌"
         ping = pings_map[node.id]
         ping_str = f"{int(ping)}ms" if ping is not None else "нет TCP"
         name = f"{_compact_node_name(node.display_name)} ({ping_str})"
         keyboard.append(
             [
-                InlineKeyboardButton(
-                    text=f"{icon} {name}", callback_data=f"nodes_gtoggle_{node.id}_{page}"
+                inline_button(
+                    name,
+                    icon="check" if node.is_active else "blocked",
+                    style="success" if node.is_active else None,
+                    callback_data=f"nodes_gtoggle_{node.id}_{page}",
                 ),
-                InlineKeyboardButton(text="✏️", callback_data=f"nodes_grename_{node.id}_{page}"),
+                inline_button("Имя", icon="doc", callback_data=f"nodes_grename_{node.id}_{page}"),
             ]
         )
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton(text="◀️", callback_data=f"nodes_global_active_{page - 1}"))
+        nav.append(inline_button("Назад", callback_data=f"nodes_global_active_{page - 1}"))
     if total_pages > 1:
-        nav.append(
-            InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="nodes_noop")
-        )
+        nav.append(inline_button(f"{page + 1}/{total_pages}", callback_data="nodes_noop"))
     if page < total_pages - 1:
-        nav.append(InlineKeyboardButton(text="▶️", callback_data=f"nodes_global_active_{page + 1}"))
+        nav.append(inline_button("Далее", callback_data=f"nodes_global_active_{page + 1}"))
     if nav:
         keyboard.append(nav)
 
     keyboard.append(
         [
-            InlineKeyboardButton(text="◀️ Назад к подпискам", callback_data="nodes_back_list"),
+            inline_button("К подпискам", icon="home", callback_data="nodes_back_list"),
         ]
     )
 

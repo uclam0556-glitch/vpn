@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     bot_username: str = "HamaliVpn_bot"
     admin_telegram_ids: str = ""
     support_username: str = "Hamali_Support"
+    news_channel_username: str = "hamalivpn"
 
     admin_username: str = "admin"
     admin_password: SecretStr = SecretStr("change-me")

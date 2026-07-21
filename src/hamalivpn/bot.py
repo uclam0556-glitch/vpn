@@ -10,14 +10,13 @@ from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F, Router
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     BotCommand,
     CallbackQuery,
     FSInputFile,
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     MenuButtonWebApp,
     Message,
     ReplyKeyboardMarkup,
@@ -44,6 +43,7 @@ from .services import (
     rotate_subscription_link,
     subscription_connect_url,
 )
+from .telegram_ui import inline_button, reply_button
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -119,6 +119,32 @@ class TapThrottleMiddleware(BaseMiddleware):
 
 def support_url() -> str:
     return f"https://t.me/{settings.support_username.lstrip('@')}"
+
+
+def news_channel_handle() -> str:
+    value = settings.news_channel_username.strip()
+    if value.startswith("https://t.me/"):
+        value = value.removeprefix("https://t.me/")
+    return value.lstrip("@").strip("/")
+
+
+def news_channel_url() -> str:
+    return f"https://t.me/{news_channel_handle()}"
+
+
+async def is_news_channel_member(bot: Bot, user_id: int) -> bool | None:
+    handle = news_channel_handle()
+    if not handle:
+        return True
+    try:
+        member = await bot.get_chat_member(chat_id=f"@{handle}", user_id=user_id)
+    except TelegramAPIError:
+        logger.exception("Could not verify @%s membership for trial", handle)
+        return None
+    status = getattr(member.status, "value", str(member.status))
+    return status in {"member", "administrator", "creator"} or bool(
+        getattr(member, "is_member", False)
+    )
 
 
 def mini_app_url(*, screen: str = "home", action: str = "") -> str:
@@ -211,21 +237,25 @@ def refresh_success_text(response_ms: int) -> str:
 def home_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(
-            text="🚀 Открыть HamaliVPN",
+        inline_button(
+            "Открыть HamaliVPN",
+            icon="rocket",
+            style="primary",
             web_app=WebAppInfo(url=mini_app_url()),
         )
     )
     builder.row(
-        InlineKeyboardButton(text="⚡ Подключить", callback_data="subscription:show"),
-        InlineKeyboardButton(text="💳 Тарифы", callback_data="menu:buy"),
+        inline_button(
+            "Подключить", icon="lightning", style="success", callback_data="subscription:show"
+        ),
+        inline_button("Тарифы", icon="card", callback_data="menu:buy"),
     )
     builder.row(
-        InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="trial:create"),
-        InlineKeyboardButton(text="✨ Бонусы", callback_data="menu:referrals"),
+        inline_button("Пробный доступ", icon="gift", callback_data="trial:create"),
+        inline_button("Бонусы", icon="sparkles", callback_data="menu:referrals"),
     )
     builder.row(
-        InlineKeyboardButton(text="🛟 Помощь", callback_data="help:connect"),
+        inline_button("Помощь", icon="support", callback_data="help:connect"),
     )
     return builder.as_markup()
 
@@ -234,12 +264,17 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(
-                    text="🚀 Открыть HamaliVPN",
+                reply_button(
+                    "Открыть HamaliVPN",
+                    icon="rocket",
+                    style="primary",
                     web_app=WebAppInfo(url=mini_app_url()),
                 )
             ],
-            [KeyboardButton(text="⚡ Подключить"), KeyboardButton(text="🛟 Помощь")],
+            [
+                reply_button("Подключить", icon="lightning", style="success"),
+                reply_button("Помощь", icon="support"),
+            ],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -250,24 +285,28 @@ def main_reply_keyboard() -> ReplyKeyboardMarkup:
 def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(
-            text="🚀 Подключить в Mini App",
+        inline_button(
+            "Подключить в Mini App",
+            icon="rocket",
+            style="success",
             web_app=WebAppInfo(url=mini_app_url(screen="subscription", action="connect")),
         )
     )
     builder.row(
-        InlineKeyboardButton(
-            text="🔗 Открыть настройку",
+        inline_button(
+            "Открыть настройку",
+            icon="link",
+            style="primary",
             url=subscription_connect_url(settings, subscription),
         )
     )
     builder.row(
-        InlineKeyboardButton(text="💳 Продлить", callback_data="menu:buy"),
-        InlineKeyboardButton(text="↻ Обновить ссылку", callback_data="subscription:rotate"),
+        inline_button("Продлить", icon="card", callback_data="menu:buy"),
+        inline_button("Обновить ссылку", icon="refresh", callback_data="subscription:rotate"),
     )
     builder.row(
-        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
-        InlineKeyboardButton(text="🛟 Помощь", url=support_url()),
+        inline_button("Назад", icon="home", callback_data="menu:home"),
+        inline_button("Помощь", icon="support", url=support_url()),
     )
     return builder.as_markup()
 
@@ -275,15 +314,19 @@ def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
 def help_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(
-            text="🚀 Открыть инструкцию",
+        inline_button(
+            "Открыть инструкцию",
+            icon="rocket",
+            style="primary",
             web_app=WebAppInfo(url=mini_app_url(screen="support")),
         )
     )
-    builder.row(InlineKeyboardButton(text="🛟 Написать в поддержку", url=support_url()))
     builder.row(
-        InlineKeyboardButton(text="⚡ Моя подписка", callback_data="subscription:show"),
-        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
+        inline_button("Написать в поддержку", icon="support", style="success", url=support_url())
+    )
+    builder.row(
+        inline_button("Моя подписка", icon="shield", callback_data="subscription:show"),
+        inline_button("Назад", icon="home", callback_data="menu:home"),
     )
     return builder.as_markup()
 
@@ -291,9 +334,31 @@ def help_keyboard() -> InlineKeyboardMarkup:
 def back_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
-        InlineKeyboardButton(text="🛟 Помощь", url=support_url()),
+        inline_button("Назад", icon="home", callback_data="menu:home"),
+        inline_button("Помощь", icon="support", url=support_url()),
     )
+    return builder.as_markup()
+
+
+def trial_gate_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        inline_button(
+            "Подписаться на канал",
+            icon="chat",
+            style="primary",
+            url=news_channel_url(),
+        )
+    )
+    builder.row(
+        inline_button(
+            "Проверить подписку",
+            icon="check",
+            style="success",
+            callback_data="trial:check",
+        )
+    )
+    builder.row(inline_button("Назад", icon="home", callback_data="menu:home"))
     return builder.as_markup()
 
 
@@ -457,12 +522,12 @@ async def show_status(message: Message) -> None:
     await send_subscription(message)
 
 
-@router.message(F.text == "⚡ Подключить")
+@router.message(F.text.in_({"Подключить", "⚡ Подключить", "⚡️ Подключить"}))
 async def quick_connect(message: Message) -> None:
     await send_subscription(message)
 
 
-@router.message(F.text == "🛟 Помощь")
+@router.message(F.text.in_({"Помощь", "🛟 Помощь", "💬 Помощь"}))
 async def quick_help(message: Message) -> None:
     await message.answer(help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML)
 
@@ -499,14 +564,36 @@ async def info_show(callback: CallbackQuery) -> None:
         await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
-@router.callback_query(F.data == "trial:create")
+@router.callback_query(F.data.in_({"trial:create", "trial:check"}))
 async def create_trial(callback: CallbackQuery) -> None:
-    await callback.answer()
+    await callback.answer("Проверяем подписку…")
     user = callback.from_user
     if callback.message is None:
         return
 
-    loading_text = "⏳ Активирую подписку…"
+    membership = await is_news_channel_member(callback.message.bot, user.id)
+    if membership is not True:
+        if membership is False:
+            text = (
+                f"{ce('gift')} <b>Пробный доступ</b>\n\n"
+                f"Подпишитесь на официальный канал <b>@{html.escape(news_channel_handle())}</b>. "
+                "После подписки нажмите «Проверить подписку» — доступ включится автоматически."
+            )
+        else:
+            text = (
+                f"{ce('warning')} <b>Не удалось проверить подписку</b>\n\n"
+                "Проверка временно недоступна. Попробуйте ещё раз через минуту."
+            )
+        kb = trial_gate_keyboard()
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
+            )
+        else:
+            await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        return
+
+    loading_text = f"{ce('clock')} Активируем пробный доступ…"
     if callback.message.photo:
         await callback.message.edit_caption(caption=loading_text)
     else:
@@ -781,16 +868,20 @@ async def connection_help(callback: CallbackQuery) -> None:
 def docs_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(
-            text="🔒 Политика конфиденциальности", url="https://app.hamali.ru/privacy"
+        inline_button(
+            "Политика конфиденциальности",
+            icon="lock",
+            url="https://app.hamali.ru/privacy",
         )
     )
     builder.row(
-        InlineKeyboardButton(
-            text="📜 Пользовательское соглашение", url="https://app.hamali.ru/terms"
+        inline_button(
+            "Пользовательское соглашение",
+            icon="scroll",
+            url="https://app.hamali.ru/terms",
         )
     )
-    builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    builder.row(inline_button("Главная", icon="home", callback_data="menu:home"))
     return builder.as_markup()
 
 
