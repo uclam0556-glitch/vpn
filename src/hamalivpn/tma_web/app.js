@@ -11,6 +11,10 @@ const tg = window.Telegram?.WebApp || fallbackTelegram;
 const API_BASE = "/api/tma";
 const API_TIMEOUT = 15000;
 const state = { me: null, plans: [], devices: null, referrals: null, payments: null, view: "home" };
+const launchParams = new URLSearchParams(window.location.search);
+const launchScreen = ["home", "subscription", "tariffs", "bonus", "support"].includes(launchParams.get("screen"))
+  ? launchParams.get("screen") : "home";
+const launchAction = launchParams.get("action") || "";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -201,6 +205,8 @@ function showFatal(message) {
 async function loadApp() {
   try {
     const [me, plans] = await Promise.all([api("/me"), api("/plans")]); state.me = me; state.plans = plans; renderMe(); renderPlans();
+    if (launchScreen !== "home") showView(launchScreen);
+    if (launchAction === "connect") openConnect();
   } catch (error) { showFatal(error.message); }
 }
 

@@ -1,11 +1,18 @@
 import html
 import logging
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    WebAppInfo,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import distinct, func, select
 
@@ -14,13 +21,12 @@ from .db import SessionFactory
 from .models import (
     BalanceTransaction,
     Customer,
-    PaymentStatus,
-    PaymentTransaction,
     Subscription,
     SubscriptionStatus,
     WithdrawalRequest,
     WithdrawalStatus,
 )
+from .public_urls import public_connect_base_url
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -36,15 +42,28 @@ class SetupState(StatesGroup):
     waiting_requisites = State()
 
 
-def _kb(can_withdraw: bool) -> InlineKeyboardMarkup:
+def _kb(can_withdraw: bool, referral_link: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="🔗 Получить ссылку", callback_data="ref:link"))
-    b.row(InlineKeyboardButton(text="🏦 Реквизиты вывода", callback_data="ref:setup"))
-    if can_withdraw:
-        b.row(InlineKeyboardButton(text="💸 Вывести средства", callback_data="ref:withdraw"))
     b.row(
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="menu:referrals"),
-        InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"),
+        InlineKeyboardButton(
+            text="🚀 Открыть бонусы в Mini App",
+            web_app=WebAppInfo(
+                url=f"{public_connect_base_url(settings)}/tma/?screen=bonus"
+            ),
+        )
+    )
+    share_url = (
+        "https://t.me/share/url?url="
+        f"{quote(referral_link, safe='')}&text="
+        f"{quote('Попробуй HamaliVPN — по моей ссылке тебя ждёт бонус.', safe='')}"
+    )
+    b.row(InlineKeyboardButton(text="🔗 Поделиться ссылкой", url=share_url))
+    b.row(InlineKeyboardButton(text="⚙️ Реквизиты", callback_data="ref:setup"))
+    if can_withdraw:
+        b.row(InlineKeyboardButton(text="💸 Вывести", callback_data="ref:withdraw"))
+    b.row(
+        InlineKeyboardButton(text="↻ Обновить", callback_data="menu:referrals"),
+        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
     )
     return b.as_markup()
 
@@ -109,9 +128,6 @@ async def _render(bot, tg_id: int, username: str | None = None, full_name: str =
         ]
         ref_count = len(referred_ids)
         active_count = 0
-        paid_count = 0
-        paid_amount = 0
-        earned_total = 0
         if referred_ids:
             active_count = int(
                 await s.scalar(
@@ -123,19 +139,6 @@ async def _render(bot, tg_id: int, username: str | None = None, full_name: str =
                 )
                 or 0
             )
-            paid_row = (
-                await s.execute(
-                    select(
-                        func.count(PaymentTransaction.id),
-                        func.coalesce(func.sum(PaymentTransaction.amount), 0),
-                    ).where(
-                        PaymentTransaction.customer_id.in_(referred_ids),
-                        PaymentTransaction.status == PaymentStatus.paid,
-                    )
-                )
-            ).one()
-            paid_count = int(paid_row[0] or 0)
-            paid_amount = int(paid_row[1] or 0)
 
         earned_total = int(
             await s.scalar(
@@ -151,24 +154,18 @@ async def _render(bot, tg_id: int, username: str | None = None, full_name: str =
     link = f"https://t.me/{info.username}?start=ref_{tg_id}"
     rate = int(REFERRAL_RATE * 100)
     text = (
-        "⭐️ <b>Бонусы HamaliVPN</b>\n\n"
-        "Это живая статистика по вашей реферальной ссылке.\n\n"
+        "✨ <b>Бонусы HamaliVPN</b>\n\n"
+        f"💰 Доступно: <b>{_money(balance)}</b>\n"
+        f"👥 Приглашено: <b>{ref_count}</b> · активных: <b>{active_count}</b>\n"
+        f"🎁 Начислено: <b>{_money(earned_total)}</b>\n\n"
+        f"Получайте <b>{rate}%</b> с оплат друзей.\n"
+        f"Вывод — от <b>{_money(MIN_WITHDRAWAL)}</b>.\n\n"
         "🔗 <b>Ваша ссылка</b>\n"
         f"<code>{link}</code>\n\n"
-        "📊 <b>Статистика</b>\n"
-        f"👥 Приглашено всего: <b>{ref_count}</b>\n"
-        f"🟢 Активных подписок: <b>{active_count}</b>\n"
-        f"💳 Оплаченных заказов: <b>{paid_count}</b>\n"
-        f"💰 Оплат от приглашённых: <b>{_money(paid_amount)}</b>\n"
-        f"🎁 Начислено бонусов: <b>{_money(earned_total)}</b>\n"
-        f"🏦 Доступно к выводу: <b>{_money(balance)}</b>\n\n"
-        "⚙️ <b>Настройки вывода</b>\n"
-        f"Способ: <b>{METHODS.get(method, 'не задан')}</b>\n"
-        f"Реквизиты: <code>{html.escape(_mask_requisites(requisites))}</code>\n\n"
-        f"Ставка бонуса: <b>{rate}%</b>. Вывод доступен от <b>{_money(MIN_WITHDRAWAL)}</b>.\n"
-        "Если статистика по оплатам пока нулевая — это не демо, просто ещё нет подтверждённых оплат."
+        f"⚙️ {METHODS.get(method, 'Реквизиты не заданы')} · "
+        f"<code>{html.escape(_mask_requisites(requisites))}</code>"
     )
-    return text, _kb(balance >= MIN_WITHDRAWAL)
+    return text, _kb(balance >= MIN_WITHDRAWAL, link)
 
 
 async def _show(message_or_cb, text: str, kb: InlineKeyboardMarkup) -> None:

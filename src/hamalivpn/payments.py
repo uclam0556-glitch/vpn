@@ -14,6 +14,7 @@ from aiogram.types import (
     LabeledPrice,
     Message,
     PreCheckoutQuery,
+    WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
@@ -31,6 +32,7 @@ from .models import (
     SubscriptionStatus,
     as_utc,
 )
+from .public_urls import public_connect_base_url
 from .remnawave import RemnawaveError, RemnawaveNotFoundError, make_remnawave_gateway
 from .services import get_latest_subscription, issue_trial
 
@@ -49,16 +51,26 @@ PLANS = {
 REFERRAL_RATE = 0.30  # доля пополнения, начисляемая пригласившему
 
 
+def _mini_app_tariffs_url() -> str:
+    return f"{public_connect_base_url(settings)}/tma/?screen=tariffs"
+
+
 def buy_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text="🚀 Выбрать тариф в Mini App",
+            web_app=WebAppInfo(url=_mini_app_tariffs_url()),
+        )
+    )
     for code, plan in PLANS.items():
         builder.row(
             InlineKeyboardButton(
-                text=f"💳 {plan['name']} — {plan['price']} ₽",
+                text=f"{plan['name']} — {plan['price']} ₽",
                 callback_data=f"platega:{code}",
             )
         )
-    builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    builder.row(InlineKeyboardButton(text="← Назад", callback_data="menu:home"))
     return builder.as_markup()
 
 
@@ -66,14 +78,15 @@ def buy_keyboard() -> InlineKeyboardMarkup:
 async def show_buy_menu(callback: CallbackQuery) -> None:
     await callback.answer()
     text = (
-        "💳 <b>Оформление подписки</b>\n\n"
-        "Выберите тариф и оплатите картой или через СБП.\n"
-        "Доступ активируется автоматически сразу после оплаты."
+        "💳 <b>Тарифы HamaliVPN</b>\n\n"
+        "Оплата картой или СБП. Доступ включится автоматически."
     )
     if callback.message.photo:
-        await callback.message.edit_caption(caption=text, reply_markup=buy_keyboard())
+        await callback.message.edit_caption(
+            caption=text, reply_markup=buy_keyboard(), parse_mode="HTML"
+        )
     else:
-        await callback.message.edit_text(text, reply_markup=buy_keyboard())
+        await callback.message.edit_text(text, reply_markup=buy_keyboard(), parse_mode="HTML")
 
 
 class PlategaPaymentError(RuntimeError):
@@ -205,13 +218,12 @@ async def process_platega_buy(callback: CallbackQuery) -> None:
             await session.commit()
 
     kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text=f"💳 Оплатить {plan['price']} ₽", url=payment["url"]))
-    kb.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
+    kb.row(InlineKeyboardButton(text=f"Оплатить {plan['price']} ₽", url=payment["url"]))
+    kb.row(InlineKeyboardButton(text="← Назад к тарифам", callback_data="menu:buy"))
     text = (
-        f"💳 <b>Оплата тарифа {plan['name']}</b>\n\n"
-        f"Сумма: <b>{plan['price']} ₽</b>\n"
-        "После оплаты доступ активируется автоматически.\n\n"
-        "Нажмите кнопку ниже и завершите оплату."
+        f"💳 <b>{plan['name']}</b>\n\n"
+        f"К оплате: <b>{plan['price']} ₽</b>\n"
+        "Подписка активируется сразу после оплаты."
     )
     if callback.message.photo:
         await callback.message.edit_caption(

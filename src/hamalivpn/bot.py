@@ -17,8 +17,10 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     MenuButtonWebApp,
     Message,
+    ReplyKeyboardMarkup,
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -29,6 +31,7 @@ from .config import get_settings
 from .db import SessionFactory, create_schema
 from .models import Customer, Subscription, SubscriptionStatus, as_utc
 from .premium_emoji import ce, collect_custom_emojis
+from .public_urls import public_connect_base_url
 from .remnawave import RemnawaveError, make_remnawave_gateway
 from .services import (
     CustomerBlockedError,
@@ -49,7 +52,7 @@ router.include_router(payments.router)
 router.include_router(referrals.router)
 router.include_router(integration.integration_router)
 
-BANNER = Path(__file__).resolve().parent / "static" / "banner.png"
+BANNER = Path(__file__).resolve().parent / "static" / "banner-v2.png"
 PREMIUM_EMOJI_KEYS = [
     "brand",
     "speed",
@@ -118,18 +121,23 @@ def support_url() -> str:
     return f"https://t.me/{settings.support_username.lstrip('@')}"
 
 
+def mini_app_url(*, screen: str = "home", action: str = "") -> str:
+    base = f"{public_connect_base_url(settings)}/tma/"
+    query = f"screen={screen}"
+    if action:
+        query += f"&action={action}"
+    return f"{base}?{query}"
+
+
 # ── тексты ─────────────────────────────────────────────────────────────────
 
 
 def welcome_text(name: str) -> str:
     return (
-        f"{ce('brand')} <b>{name}</b>, добро пожаловать в <b>HamaliVPN</b>\n\n"
-        "Премиальный доступ к свободному интернету — быстро, стабильно и без сложных настроек.\n\n"
-        f"{ce('speed')} <b>Быстро</b> — оптимизированная сеть Европы\n"
-        f"{ce('shield')} <b>Надёжно</b> — несколько протоколов и резервные направления\n"
-        f"{ce('connect')} <b>Просто</b> — подключение в 1–2 клика\n"
-        f"{ce('support')} <b>Рядом</b> — поддержка, если что-то не открывается\n\n"
-        "Выберите действие ниже 👇"
+        f"{ce('brand')} <b>HamaliVPN</b>\n\n"
+        f"Привет, <b>{name}</b>! Свободный интернет без сложных настроек.\n\n"
+        "Подключение, продление, устройства и бонусы — в одном Mini App.\n\n"
+        f"{ce('rocket')} <b>Откройте HamaliVPN и подключайтесь.</b>"
     )
 
 
@@ -141,69 +149,51 @@ def subscription_text(subscription: Subscription) -> str:
     }
     status = status_map.get(subscription.status, f"{ce('white')} Неизвестно")
 
-    expires = "∞ Бессрочно"
+    validity = "Бессрочно"
     if subscription.expires_at:
         delta = as_utc(subscription.expires_at) - datetime.now(UTC)
         days = delta.days
         if days < 0:
-            expires = f"{ce('red')} Истекла"
+            validity = "Срок действия завершён"
         elif days == 0:
-            expires = f"{ce('warning')} Истекает сегодня"
+            validity = "Действует до конца дня"
         else:
-            expires = f"{ce('calendar')} {days} дн."
-
-    date_line = ""
-    if subscription.expires_at:
-        date_line = (
-            f"\n{ce('calendar')} Дата окончания — "
-            f"{as_utc(subscription.expires_at).strftime('%d.%m.%Y')}"
-        )
+            validity = f"До {as_utc(subscription.expires_at).strftime('%d.%m.%Y')}"
 
     return (
-        f"{ce('user')} <b>Моя подписка</b>\n\n"
-        f"Статус — {status}\n"
-        f"Осталось — {expires}{date_line}\n"
-        f"Лимит устройств — {subscription.device_limit}\n\n"
-        f"Нажмите <b>«{ce('connect')} Подключить устройство»</b> — откроется страница быстрой настройки."
+        f"{ce('shield')} <b>Моя подписка</b>\n\n"
+        f"{status}\n"
+        f"{ce('calendar')} <b>{validity}</b>\n"
+        f"{ce('phone')} До <b>{subscription.device_limit}</b> устройств\n\n"
+        "Подключение и управление устройствами доступны в Mini App."
     )
 
 
 def trial_success_text(traffic_label: str, device_limit: int) -> str:
     return (
         f"{ce('check')} <b>Пробный доступ активирован</b>\n\n"
-        f"Трафик — {traffic_label}\n"
-        f"Лимит устройств — {device_limit}\n\n"
-        f"Теперь нажмите <b>«{ce('connect')} Подключить устройство»</b> и импортируйте профиль в приложение."
+        f"{traffic_label} · {device_limit} устройство\n\n"
+        "Откройте Mini App — подберём приложение и подключим VPN."
     )
 
 
 def info_text() -> str:
     return (
-        f"{ce('diamond')} <b>HamaliVPN — коротко</b>\n\n"
-        f"{ce('speed')} <b>Скорость</b>\n"
-        "   Подбираем локации под мобильные сети и стабильный отклик.\n\n"
-        f"{ce('shield')} <b>Устойчивость</b>\n"
-        "   VLESS Reality + быстрые LTE/Hysteria направления как резерв.\n\n"
-        f"{ce('connect')} <b>Удобство</b>\n"
-        "   Подключение через готовую ссылку без ручной настройки.\n\n"
-        f"{ce('refresh')} <b>Запас</b>\n"
-        "   Несколько резервных направлений внутри одной подписки.\n\n"
-        "📱 <b>Платформы</b>\n"
-        "   iPhone, Android, Windows, macOS.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        f"{ce('support')} Поддержка: {support_url()}"
+        f"{ce('shield')} <b>О HamaliVPN</b>\n\n"
+        f"{ce('lightning')} Быстрые локации и автоматическое обновление\n"
+        f"{ce('lock')} Современные протоколы и резервные подключения\n"
+        f"{ce('phone')} iPhone, Android, Windows и macOS\n\n"
+        "Настройка занимает пару минут в Mini App."
     )
 
 
 def help_text() -> str:
     return (
-        f"{ce('connect')} <b>Подключение HamaliVPN</b>\n\n"
-        "<b>1.</b> Установите подходящее приложение для VPN на своё устройство.\n"
-        "Если не знаете какое выбрать — напишите в поддержку, подскажем быстро.\n\n"
-        f"<b>2.</b> Нажмите «👤 Моя подписка» → «{ce('connect')} Подключить устройство».\n\n"
-        "<b>3.</b> Откройте ссылку в приложении и включите VPN.\n\n"
-        "Если приложение не импортирует профиль или интернет не открывается — напишите в поддержку.\n\n"
-        "Нужные кнопки ниже 👇"
+        f"{ce('support')} <b>Помощь с подключением</b>\n\n"
+        "<b>1.</b> Откройте HamaliVPN.\n"
+        "<b>2.</b> Нажмите «Подключить VPN».\n"
+        "<b>3.</b> Следуйте инструкции для своего устройства.\n\n"
+        "Если не получилось — поддержка ответит и поможет."
     )
 
 
@@ -221,56 +211,89 @@ def refresh_success_text(response_ms: int) -> str:
 def home_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
+        InlineKeyboardButton(
+            text="🚀 Открыть HamaliVPN",
+            web_app=WebAppInfo(url=mini_app_url()),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(text="⚡ Подключить", callback_data="subscription:show"),
+        InlineKeyboardButton(text="💳 Тарифы", callback_data="menu:buy"),
+    )
+    builder.row(
         InlineKeyboardButton(text="🎁 Пробный доступ", callback_data="trial:create"),
-        InlineKeyboardButton(text="💳 Купить", callback_data="menu:buy"),
+        InlineKeyboardButton(text="✨ Бонусы", callback_data="menu:referrals"),
     )
     builder.row(
-        InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
-        InlineKeyboardButton(text="⭐️ Бонусы", callback_data="menu:referrals"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="📘 Инструкция", callback_data="help:connect"),
-        InlineKeyboardButton(text="💎 О сервисе", callback_data="info:show"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
-        InlineKeyboardButton(text="📄 Документы", callback_data="docs:menu"),
+        InlineKeyboardButton(text="🛟 Помощь", callback_data="help:connect"),
     )
     return builder.as_markup()
+
+
+def main_reply_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(
+                    text="🚀 Открыть HamaliVPN",
+                    web_app=WebAppInfo(url=mini_app_url()),
+                )
+            ],
+            [KeyboardButton(text="⚡ Подключить"), KeyboardButton(text="🛟 Помощь")],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Выберите действие",
+    )
 
 
 def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="📲 Подключить устройство",
+            text="🚀 Подключить в Mini App",
+            web_app=WebAppInfo(url=mini_app_url(screen="subscription", action="connect")),
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="🔗 Открыть настройку",
             url=subscription_connect_url(settings, subscription),
         )
     )
     builder.row(
-        InlineKeyboardButton(text="🔁 Новая ссылка", callback_data="subscription:rotate"),
+        InlineKeyboardButton(text="💳 Продлить", callback_data="menu:buy"),
+        InlineKeyboardButton(text="↻ Обновить ссылку", callback_data="subscription:rotate"),
     )
     builder.row(
-        InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"),
-        InlineKeyboardButton(text="💬 Поддержка", url=support_url()),
+        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
+        InlineKeyboardButton(text="🛟 Помощь", url=support_url()),
     )
     return builder.as_markup()
 
 
 def help_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="💬 Написать в поддержку", url=support_url()))
     builder.row(
-        InlineKeyboardButton(text="👤 Моя подписка", callback_data="subscription:show"),
-        InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"),
+        InlineKeyboardButton(
+            text="🚀 Открыть инструкцию",
+            web_app=WebAppInfo(url=mini_app_url(screen="support")),
+        )
+    )
+    builder.row(InlineKeyboardButton(text="🛟 Написать в поддержку", url=support_url()))
+    builder.row(
+        InlineKeyboardButton(text="⚡ Моя подписка", callback_data="subscription:show"),
+        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
     )
     return builder.as_markup()
 
 
 def back_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="🏠 Главная", callback_data="menu:home"))
-    builder.row(InlineKeyboardButton(text="💬 Поддержка", url=support_url()))
+    builder.row(
+        InlineKeyboardButton(text="← Назад", callback_data="menu:home"),
+        InlineKeyboardButton(text="🛟 Помощь", url=support_url()),
+    )
     return builder.as_markup()
 
 
@@ -316,7 +339,7 @@ async def start(message: Message, command: CommandObject) -> None:
                     await session.commit()
 
     text = welcome_text(name)
-    kb = home_keyboard()
+    kb = main_reply_keyboard()
     if BANNER.exists():
         try:
             await message.answer_photo(
@@ -402,8 +425,7 @@ async def show_help(message: Message) -> None:
     await message.answer(help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML)
 
 
-@router.message(Command("status"))
-async def show_status(message: Message) -> None:
+async def send_subscription(message: Message) -> None:
     if message.from_user is None:
         return
     async with SessionFactory() as session:
@@ -428,6 +450,21 @@ async def show_status(message: Message) -> None:
         reply_markup=subscription_keyboard(subscription),
         parse_mode=ParseMode.HTML,
     )
+
+
+@router.message(Command("status"))
+async def show_status(message: Message) -> None:
+    await send_subscription(message)
+
+
+@router.message(F.text == "⚡ Подключить")
+async def quick_connect(message: Message) -> None:
+    await send_subscription(message)
+
+
+@router.message(F.text == "🛟 Помощь")
+async def quick_help(message: Message) -> None:
+    await message.answer(help_text(), reply_markup=help_keyboard(), parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(F.data == "menu:home")
@@ -791,18 +828,20 @@ async def main() -> None:
         await create_schema()
     bot = Bot(token=token)
     try:
-        cabinet_url = f"{settings.activation_base_url.rstrip('/')}/tma/"
         await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="Личный кабинет", web_app=WebAppInfo(url=cabinet_url))
+            menu_button=MenuButtonWebApp(
+                text="Открыть HamaliVPN",
+                web_app=WebAppInfo(url=mini_app_url()),
+            )
         )
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось сбросить menu button", exc_info=True)
     try:
         await bot.set_my_commands(
             [
-                BotCommand(command="start", description="Открыть HamaliVpn"),
-                BotCommand(command="help", description="Помощь и поддержка"),
-                BotCommand(command="status", description="Моя подписка"),
+                BotCommand(command="start", description="Главное меню"),
+                BotCommand(command="status", description="Подключение и подписка"),
+                BotCommand(command="help", description="Помощь"),
                 BotCommand(command="id", description="Мой Telegram ID"),
             ]
         )
