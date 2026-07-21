@@ -24,7 +24,10 @@ CLUSTER_REMARKS = {
     "fi": "🇫🇮 Финляндия",
 }
 INCY_PROFILE_HEADERS = {
-    "sort-order": "ping",
+    # Preserve the deliberate provider order. Sorting by ping promotes
+    # emergency/allowlist profiles above normal exits after every ping refresh,
+    # which makes users connect to a specialised route by accident.
+    "sort-order": "none",
     # XHTTP/full-config profiles can exceed the iOS Network Extension memory
     # budget. INCY documents this opt-in mode specifically to keep the tunnel
     # below the 50 MB cap instead of being killed immediately after connect.

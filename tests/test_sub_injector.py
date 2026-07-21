@@ -347,6 +347,7 @@ def test_incy_uses_one_full_config_subscription_and_happ_stays_full_config() -> 
     Handler.path = "/token"
     Handler.headers = {"User-Agent": "Happ/3.0"}
     assert requested_cluster(Handler()) == "all"
+    assert INCY_PROFILE_HEADERS["sort-order"] == "none"
     assert INCY_PROFILE_HEADERS["no-limit-enabled"] == "1"
 
 
