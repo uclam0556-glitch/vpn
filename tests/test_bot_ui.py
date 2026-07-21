@@ -5,11 +5,13 @@ import pytest
 
 import hamalivpn.telegram_ui as telegram_ui
 from hamalivpn.bot import (
+    admin_bot_commands,
     home_keyboard,
     is_news_channel_member,
     main_reply_keyboard,
     mini_app_url,
     news_channel_url,
+    public_bot_commands,
     trial_gate_keyboard,
     welcome_text,
 )
@@ -23,6 +25,14 @@ def test_welcome_is_compact_and_centers_mini_app() -> None:
     assert len(text) < 360
     assert "Mini App" in text
     assert "Откройте HamaliVPN" in text
+
+
+def test_admin_command_menu_keeps_integration_tools_private() -> None:
+    public = [command.command for command in public_bot_commands()]
+    admin = [command.command for command in admin_bot_commands()]
+
+    assert public == ["start", "status", "help", "id"]
+    assert admin == ["start", "status", "help", "id", "nodes", "integrate"]
 
 
 def test_main_menu_has_one_primary_web_app_action() -> None:

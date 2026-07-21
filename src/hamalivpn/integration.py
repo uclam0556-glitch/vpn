@@ -34,6 +34,7 @@ from .telegram_ui import inline_button
 
 
 class IntegrationState(StatesGroup):
+    waiting_for_url = State()
     waiting_for_name = State()
 
 
@@ -364,21 +365,20 @@ async def synchronize_integration_nodes(
     return {"added": added, "updated": updated, "removed": removed}
 
 
-@integration_router.message(Command("integrate"))
-async def start_integration(message: Message) -> None:
-    settings = get_settings()
-    if message.from_user.id not in settings.admin_ids:
-        return
-
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("Использование: /integrate <ссылка_на_подписку>")
-        return
-
-    url = parts[1].strip()
-    status_msg = await message.answer(
-        "🕵️‍♂️ Скачиваю подписку в режиме 'Стелс' (ищу ваш настоящий HWID в базе, чтобы обмануть их защиту)..."
+async def _prompt_for_integration_url(message: Message, state: FSMContext) -> None:
+    prompt = await message.answer(
+        "🔗 <b>Добавление VPN-подписки</b>\n\n"
+        "Отправьте ссылку на подписку одним сообщением. "
+        "После проверки откроется список серверов — вы сами выберете нужные.",
+        parse_mode=ParseMode.HTML,
+        reply_markup=ForceReply(selective=True, input_field_placeholder="https://…"),
     )
+    await state.set_state(IntegrationState.waiting_for_url)
+    await state.update_data(integration_prompt_msg_id=prompt.message_id)
+
+
+async def _integrate_subscription_url(message: Message, url: str) -> None:
+    status_msg = await message.answer("⏳ Проверяю подписку и безопасно загружаю список серверов…")
 
     hwid = None
     async with SessionFactory() as session:
@@ -432,6 +432,39 @@ async def start_integration(message: Message) -> None:
 
         await session.commit()
         await show_integration_menu(status_msg, link.id, session, is_edit=True)
+
+
+@integration_router.message(Command("integrate"))
+async def start_integration(message: Message, state: FSMContext) -> None:
+    settings = get_settings()
+    if message.from_user.id not in settings.admin_ids:
+        return
+
+    parts = str(message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await _prompt_for_integration_url(message, state)
+        return
+
+    await state.clear()
+    await _integrate_subscription_url(message, parts[1].strip())
+
+
+@integration_router.message(IntegrationState.waiting_for_url)
+async def process_integration_url(message: Message, state: FSMContext) -> None:
+    settings = get_settings()
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        return
+
+    url = str(message.text or "").strip()
+    if not url.startswith(("http://", "https://")):
+        await message.answer(
+            "❌ Нужна полная HTTP(S)-ссылка. Отправьте ссылку ещё раз или используйте /nodes."
+        )
+        return
+
+    await state.clear()
+    await _integrate_subscription_url(message, url)
 
 
 async def show_integration_menu(
@@ -489,6 +522,7 @@ async def show_integration_menu(
 async def toggle_node(callback_query: CallbackQuery) -> None:
     settings = get_settings()
     if callback_query.from_user.id not in settings.admin_ids:
+        await callback_query.answer("Недоступно", show_alert=False)
         return
 
     node_id = int(callback_query.data.split("_")[-1])
@@ -498,12 +532,16 @@ async def toggle_node(callback_query: CallbackQuery) -> None:
             node.is_active = not node.is_active
             await session.commit()
             await show_integration_menu(callback_query, node.link_id, session)
+            await callback_query.answer("Включён" if node.is_active else "Выключен")
+        else:
+            await callback_query.answer("Сервер больше не найден", show_alert=True)
 
 
 @integration_router.callback_query(F.data.startswith("intg_edit_"))
 async def prompt_edit_name(callback_query: CallbackQuery, state: FSMContext) -> None:
     settings = get_settings()
     if callback_query.from_user.id not in settings.admin_ids:
+        await callback_query.answer("Недоступно", show_alert=False)
         return
 
     node_id = int(callback_query.data.split("_")[-1])
@@ -781,7 +819,18 @@ async def _nodes_links_keyboard(session) -> tuple[str, InlineKeyboardMarkup]:
 
     if not seen:
         text = "📭 <b>Нет добавленных интеграций.</b>\n\nИспользуйте /integrate <ссылка> чтобы добавить."
-        return text, InlineKeyboardMarkup(inline_keyboard=[])
+        return text, InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    inline_button(
+                        "Добавить подписку",
+                        icon="link",
+                        style="primary",
+                        callback_data="nodes_add_link",
+                    )
+                ]
+            ]
+        )
 
     keyboard = []
     for url, (link, active_n, total_n) in seen.items():
@@ -802,6 +851,16 @@ async def _nodes_links_keyboard(session) -> tuple[str, InlineKeyboardMarkup]:
                 ),
             ]
         )
+    keyboard.append(
+        [
+            inline_button(
+                "Добавить подписку",
+                icon="link",
+                style="primary",
+                callback_data="nodes_add_link",
+            )
+        ]
+    )
     keyboard.append(
         [inline_button("Обновить список", icon="refresh", callback_data="nodes_refresh_list")]
     )
@@ -1044,6 +1103,16 @@ async def cmd_nodes(message: Message) -> None:
     await message.answer(
         text, reply_markup=markup, parse_mode=ParseMode.HTML, disable_web_page_preview=True
     )
+
+
+@integration_router.callback_query(F.data == "nodes_add_link")
+async def nodes_add_link(cb: CallbackQuery, state: FSMContext) -> None:
+    settings = get_settings()
+    if cb.from_user.id not in settings.admin_ids:
+        await cb.answer("Недоступно", show_alert=False)
+        return
+    await cb.answer()
+    await _prompt_for_integration_url(cb.message, state)
 
 
 @integration_router.callback_query(F.data == "nodes_refresh_list")

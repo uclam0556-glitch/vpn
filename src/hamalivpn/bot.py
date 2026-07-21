@@ -14,6 +14,7 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeChat,
     CallbackQuery,
     FSInputFile,
     InlineKeyboardMarkup,
@@ -79,6 +80,27 @@ PREMIUM_EMOJI_KEYS = [
     "sparkles",
 ]
 _premium_emoji_capture: dict[int, list[dict[str, str]]] = {}
+
+
+def public_bot_commands() -> list[BotCommand]:
+    """Commands available to every customer."""
+
+    return [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="status", description="Подключение и подписка"),
+        BotCommand(command="help", description="Помощь"),
+        BotCommand(command="id", description="Мой Telegram ID"),
+    ]
+
+
+def admin_bot_commands() -> list[BotCommand]:
+    """Private-chat command menu for control-plane administrators."""
+
+    return [
+        *public_bot_commands(),
+        BotCommand(command="nodes", description="Управление интеграциями"),
+        BotCommand(command="integrate", description="Добавить VPN-подписку"),
+    ]
 
 
 class TapThrottleMiddleware(BaseMiddleware):
@@ -928,16 +950,21 @@ async def main() -> None:
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось сбросить menu button", exc_info=True)
     try:
-        await bot.set_my_commands(
-            [
-                BotCommand(command="start", description="Главное меню"),
-                BotCommand(command="status", description="Подключение и подписка"),
-                BotCommand(command="help", description="Помощь"),
-                BotCommand(command="id", description="Мой Telegram ID"),
-            ]
-        )
+        await bot.set_my_commands(public_bot_commands())
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось обновить команды бота", exc_info=True)
+    for admin_id in settings.admin_ids:
+        try:
+            await bot.set_my_commands(
+                admin_bot_commands(),
+                scope=BotCommandScopeChat(chat_id=admin_id),
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Не удалось обновить административные команды для Telegram ID %s",
+                admin_id,
+                exc_info=True,
+            )
     dispatcher = Dispatcher()
     dispatcher.message.middleware(TapThrottleMiddleware(interval_seconds=0.45))
     dispatcher.callback_query.middleware(TapThrottleMiddleware(interval_seconds=0.85))
