@@ -1,0 +1,15 @@
+[Unit]
+Description=HamaliVPN local backup restore drill
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hamalivpn/infra/verify-local-backup-restore.sh
+User=root
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+PrivateTmp=true
+NoNewPrivileges=true
+TimeoutStartSec=30min

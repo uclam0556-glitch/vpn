@@ -69,6 +69,16 @@ backup_recent hamalivpn \
   || problems+="• резервная копия HamaliVPN старше $((BACKUP_MAX_AGE_MINUTES / 60)) ч"$'\n'
 backup_recent remnawave \
   || problems+="• резервная копия Remnawave старше $((BACKUP_MAX_AGE_MINUTES / 60)) ч"$'\n'
+if systemctl list-unit-files hamalivpn-local-restore-drill.timer --no-legend 2>/dev/null \
+  | grep -q '^hamalivpn-local-restore-drill.timer'; then
+  systemctl is-active --quiet hamalivpn-local-restore-drill.timer \
+    || problems+="• таймер проверки восстановления бэкапов не активен"$'\n'
+  restore_result=$(systemctl show hamalivpn-local-restore-drill.service \
+    -p Result --value 2>/dev/null || true)
+  if [ -n "$restore_result" ] && [ "$restore_result" != "success" ]; then
+    problems+="• последняя проверка восстановления завершилась: ${restore_result}"$'\n'
+  fi
+fi
 
 # Required containers. Respect their restart policies; the monitor does not create restart loops.
 containers=(

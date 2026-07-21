@@ -1,0 +1,11 @@
+[Unit]
+Description=Verify HamaliVPN local backups every week
+
+[Timer]
+OnCalendar=Sun *-*-* 05:30:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=hamalivpn-local-restore-drill.service
+
+[Install]
+WantedBy=timers.target
