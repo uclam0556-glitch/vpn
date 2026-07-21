@@ -10,6 +10,8 @@ const fallbackTelegram = {
 const tg = window.Telegram?.WebApp || fallbackTelegram;
 const API_BASE = "/api/tma";
 const API_TIMEOUT = 15000;
+const INIT_DATA_WAIT_MS = 3000;
+const INIT_DATA_SESSION_KEY = "hamalivpn:tma:init-data";
 const state = { me: null, plans: [], devices: null, referrals: null, payments: null, view: "home" };
 const launchParams = new URLSearchParams(window.location.search);
 const launchScreen = ["home", "subscription", "tariffs", "bonus", "support"].includes(launchParams.get("screen"))
@@ -20,6 +22,45 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
 const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+
+function launchInitData() {
+  for (const source of [window.location.hash.slice(1), window.location.search.slice(1)]) {
+    if (!source) continue;
+    const value = new URLSearchParams(source).get("tgWebAppData");
+    if (value) return value;
+  }
+  return "";
+}
+
+function storedInitData() {
+  try { return window.sessionStorage.getItem(INIT_DATA_SESSION_KEY) || ""; }
+  catch (_) { return ""; }
+}
+
+function rememberInitData(value) {
+  if (!value) return;
+  try { window.sessionStorage.setItem(INIT_DATA_SESSION_KEY, value); }
+  catch (_) { /* private mode may disable storage */ }
+}
+
+function currentInitData() {
+  const value = tg.initData || launchInitData() || storedInitData();
+  rememberInitData(value);
+  return value;
+}
+
+async function waitForInitData() {
+  const deadline = Date.now() + INIT_DATA_WAIT_MS;
+  let value = currentInitData();
+  while (!value && Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, 75));
+    value = currentInitData();
+  }
+  if (!value) {
+    throw new Error("Откройте HamaliVPN кнопкой внутри бота — Telegram не передал данные входа.");
+  }
+  return value;
+}
 
 function setupTelegram() {
   tg.ready(); tg.expand();
@@ -40,9 +81,10 @@ async function api(endpoint, { method = "GET", body } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), API_TIMEOUT);
   try {
+    const initData = await waitForInitData();
     const response = await fetch(`${API_BASE}${endpoint}`, {
       method, signal: controller.signal,
-      headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": tg.initData || "" },
+      headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": initData },
       body: body ? JSON.stringify(body) : undefined,
     });
     const data = await response.json().catch(() => ({}));

@@ -1,10 +1,20 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 
 from hamalivpn.models import Customer, Subscription, SubscriptionStatus
 from hamalivpn.payments import PLANS
-from hamalivpn.tma_api import get_me, get_plans
+from hamalivpn.tma_api import get_me, get_plans, get_tma_user
+
+
+@pytest.mark.asyncio
+async def test_tma_missing_telegram_context_has_actionable_error() -> None:
+    with pytest.raises(HTTPException) as error:
+        await get_tma_user(x_telegram_init_data="", db=None)
+
+    assert error.value.status_code == 401
+    assert "Telegram-бота" in error.value.detail
 
 
 @pytest.mark.asyncio

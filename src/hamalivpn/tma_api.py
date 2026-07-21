@@ -57,12 +57,20 @@ async def get_tma_user(
     x_telegram_init_data: str = Header(None), db: AsyncSession = Depends(get_session)
 ) -> Customer:
     if not x_telegram_init_data:
-        raise HTTPException(status_code=401, detail="No init data provided by Telegram")
+        logger.warning("TMA authentication rejected: Telegram init data is missing")
+        raise HTTPException(
+            status_code=401,
+            detail="Откройте HamaliVPN кнопкой внутри Telegram-бота",
+        )
 
     try:
         data = validate_init_data(x_telegram_init_data, settings.bot_token.get_secret_value())
     except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid auth signature") from exc
+        logger.warning("TMA authentication rejected: invalid Telegram signature")
+        raise HTTPException(
+            status_code=401,
+            detail="Telegram не подтвердил вход. Закройте и откройте Mini App заново.",
+        ) from exc
 
     tg_id = data.get("user", {}).get("id")
     if not tg_id:

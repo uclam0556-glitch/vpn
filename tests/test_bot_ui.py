@@ -78,7 +78,10 @@ def test_mini_app_supports_contextual_launch() -> None:
 
     assert 'launchAction === "connect"' in script
     assert 'launchScreen !== "home"' in script
-    assert "/tma/app.js?v=3" in page
+    assert "/tma/app.js?v=4" in page
+    assert "waitForInitData" in script
+    assert "tgWebAppData" in script
+    assert "sessionStorage" in script
 
 
 def test_modern_button_uses_custom_icon_and_native_style(monkeypatch) -> None:
