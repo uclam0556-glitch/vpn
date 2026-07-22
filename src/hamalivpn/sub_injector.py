@@ -14,16 +14,16 @@ PROFILE_NOTE = (
     "Нажмите ⓘ для перехода в бот: продление, поддержка и управление подпиской. "
     "Спасибо, что выбрали HamaliVPN. Если возникнут проблемы — напишите нам."
 )
-STANDALONE_CLUSTER_TAGS = ("nl", "fr", "fr-new", "de-new", "uk", "fi", "de")
+STANDALONE_CLUSTER_TAGS = ("nl", "fr-new", "de-new", "uk", "fi")
 CLUSTER_REMARKS = {
     "nl": "🇳🇱 Нидерланды",
-    "fr": "🇫🇷 Франция",
     "fr-new": "🇫🇷 Франция (Новая)",
     "de-new": "🇩🇪 Германия (Новая)",
-    "de": "🇩🇪 Германия",
     "uk": "🇬🇧 Юнайтед Кингдом",
     "fi": "🇫🇮 Финляндия",
 }
+LEGACY_CLUSTER_REDIRECTS = {"fr": "fr-new", "de": "de-new"}
+LEGACY_LOCATION_TAGS = {"proxy-fr", "proxy-de"}
 INCY_PROFILE_HEADERS = {
     # Preserve the deliberate provider order. Sorting by ping promotes
     # emergency/allowlist profiles above normal exits after every ping refresh,
@@ -62,6 +62,42 @@ def apply_temporary_location_failovers(config):
         if not vnext:
             continue
         vnext[0]["address"], vnext[0]["port"] = target
+    return config
+
+
+def canonical_cluster_tag(tag):
+    return LEGACY_CLUSTER_REDIRECTS.get(tag, tag)
+
+
+def remove_legacy_location_outbounds(config):
+    """Remove retired exits and every selector reference to their tags."""
+    config["outbounds"] = [
+        outbound
+        for outbound in config.get("outbounds", [])
+        if outbound.get("tag") not in LEGACY_LOCATION_TAGS
+    ]
+
+    def clean(value):
+        if isinstance(value, dict):
+            for key, child in list(value.items()):
+                if key in {"selector", "subjectSelector"} and isinstance(child, list):
+                    value[key] = [item for item in child if item not in LEGACY_LOCATION_TAGS]
+                elif key == "costs" and isinstance(child, list):
+                    value[key] = [
+                        item
+                        for item in child
+                        if not (
+                            isinstance(item, dict)
+                            and str(item.get("match", "")).strip("^$") in LEGACY_LOCATION_TAGS
+                        )
+                    ]
+                else:
+                    clean(child)
+        elif isinstance(value, list):
+            for child in value:
+                clean(child)
+
+    clean(config)
     return config
 
 
@@ -916,9 +952,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
 
                             os.environ["HYSTERIA_LEGACY_PASSWORD"]
                             obfs_pass = os.environ["HYSTERIA_OBFS_PASSWORD"]
-                            pin_fr = (
-                                "83beff34d998f9f5734f9ea7b8534b90a4d93e3621cbbc48a4f4d8d8424a1dc0"
-                            )
                             pin_nl = (
                                 "1384cdd849ec74e8fe0cb4c5793fdff9758b412046fc208f686f165a64ab216b"
                             )
@@ -928,7 +961,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 auth_token or urllib.parse.urlparse(self.path).path.split("/")[-1]
                             )
                             auth_nl = user_uuid
-                            auth_fr = user_uuid
 
                             # LTE: only the proven Hysteria directions.
                             # DE/London/UK stay on VLESS to avoid n/a spikes in clients.
@@ -936,9 +968,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 f"hy2://{auth_nl}@103.112.69.188:8443?sni={sni}&obfs=salamander&obfs-password={obfs_pass}&pinSHA256={pin_nl}#"
                                 + happ_label(
                                     "🇳🇱 Нидерланды LTE", "Hysteria | hysteria | TLS | JSON"
-                                ),
-                                f"hy2://{auth_fr}@45.92.218.178:8443?sni={sni}&obfs=salamander&obfs-password={obfs_pass}&pinSHA256={pin_fr}#"
-                                + happ_label("🇫🇷 Франция LTE", "Hysteria | hysteria | TLS | JSON"),
+                                )
                             ]
 
                             premium_links = []
@@ -966,11 +996,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         )
                                     )
                                 elif "45.92.218.178" in link:
-                                    premium_fr.append(
-                                        clean_url
-                                        + "#"
-                                        + happ_label("🇫🇷 Франция", "VLESS | TCP | Reality | JSON")
-                                    )
+                                    continue
                                 elif "107.161.160.220" in link:
                                     premium_fr.append(
                                         clean_url
@@ -979,12 +1005,8 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                             "🇫🇷 Франция (Новая)", "VLESS | TCP | Reality | JSON"
                                         )
                                     )
-                                elif "92.119.166.192" in link and "type=tcp" in link:
-                                    reserve_links.append(
-                                        clean_url
-                                        + "#"
-                                        + happ_label("🇩🇪 Германия", "VLESS | TCP | Reality | JSON")
-                                    )
+                                elif "92.119.166.192" in link:
+                                    continue
                                 elif "206.245.134.58" in link:
                                     premium_de_new.append(
                                         clean_url
@@ -1088,7 +1110,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
       "sampling": 2,
       "timeout": "5s"
     },
-    "subjectSelector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi", "proxy-de"]
+    "subjectSelector": ["proxy-nl", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi"]
   },
   "dns": {
     "queryStrategy": "UseIPv4",
@@ -1121,12 +1143,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     },
     {
       "protocol": "vless",
-      "settings": { "vnext": [{ "address": "45.92.218.178", "port": 443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
-      "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
-      "tag": "proxy-fr"
-    },
-    {
-      "protocol": "vless",
       "settings": { "vnext": [{ "address": "107.161.160.220", "port": 443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
       "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
       "tag": "proxy-fr-new"
@@ -1136,12 +1152,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
       "settings": { "vnext": [{ "address": "85.137.249.225", "port": 2053, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
       "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
       "tag": "proxy-uk"
-    },
-    {
-      "protocol": "vless",
-      "settings": { "vnext": [{ "address": "92.119.166.192", "port": 443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
-      "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
-      "tag": "proxy-de"
     },
     {
       "protocol": "vless",
@@ -1162,7 +1172,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     "balancers": [
       {
         "fallbackTag": "proxy-nl",
-        "selector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi", "proxy-de"],
+        "selector": ["proxy-nl", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi"],
         "strategy": {
           "type": "leastLoad",
           "settings": {
@@ -1172,11 +1182,9 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
             "tolerance": 0.12,
             "costs": [
               { "match": "^proxy-nl$", "regexp": true, "value": 0 },
-              { "match": "^proxy-fr$", "regexp": true, "value": 5 },
               { "match": "^proxy-fr-new$", "regexp": true, "value": 5 },
               { "match": "^proxy-uk$", "regexp": true, "value": 25 },
               { "match": "^proxy-fi$", "regexp": true, "value": 40 },
-              { "match": "^proxy-de$", "regexp": true, "value": 80 },
               { "match": "^proxy-de-new$", "regexp": true, "value": 15 }
             ]
           }
@@ -1250,7 +1258,9 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 .replace("{sid}", sid)
                             )
                             cluster_json = json.dumps(
-                                apply_temporary_location_failovers(json.loads(cluster_json)),
+                                remove_legacy_location_outbounds(
+                                    apply_temporary_location_failovers(json.loads(cluster_json))
+                                ),
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             )
@@ -1260,7 +1270,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 cfg = json.loads(cluster_json)
                                 keep_tags = {
                                     "proxy-nl",
-                                    "proxy-fr",
                                     "proxy-fr-new",
                                     "direct",
                                     "block",
@@ -1276,7 +1285,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     "enableConcurrency": True,
                                     "probeInterval": "1m",
                                     "probeUrl": "http://connectivitycheck.gstatic.com/generate_204",
-                                    "subjectSelector": ["proxy-nl", "proxy-fr", "proxy-fr-new"],
+                                    "subjectSelector": ["proxy-nl", "proxy-fr-new"],
                                 }
                                 cfg["dns"] = {
                                     "queryStrategy": "UseIPv4",
@@ -1290,7 +1299,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     "balancers": [
                                         {
                                             "tag": "white-list-lb",
-                                            "selector": ["proxy-nl", "proxy-fr", "proxy-fr-new"],
+                                            "selector": ["proxy-nl", "proxy-fr-new"],
                                             "fallbackTag": "proxy-nl",
                                             "strategy": {
                                                 "type": "leastLoad",
@@ -1304,11 +1313,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                                             "match": "proxy-nl",
                                                             "regexp": False,
                                                             "value": 0,
-                                                        },
-                                                        {
-                                                            "match": "proxy-fr",
-                                                            "regexp": False,
-                                                            "value": 10,
                                                         },
                                                         {
                                                             "match": "proxy-fr-new",
@@ -1410,7 +1414,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                             def _build_adblock_config():
                                 """Optional NL/FR profile with DNS and routing-level ad blocking."""
                                 cfg = json.loads(cluster_json)
-                                keep_tags = {"proxy-nl", "proxy-fr", "direct", "block"}
+                                keep_tags = {"proxy-nl", "proxy-fr-new", "direct", "block"}
                                 cfg["remarks"] = "🇪🇺 YouTube без рекламы"
                                 cfg["outbounds"] = [
                                     outbound
@@ -1425,7 +1429,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         "sampling": 2,
                                         "timeout": "5s",
                                     },
-                                    "subjectSelector": ["proxy-nl", "proxy-fr"],
+                                    "subjectSelector": ["proxy-nl", "proxy-fr-new"],
                                 }
                                 cfg["dns"] = {
                                     "queryStrategy": "UseIPv4",
@@ -1452,7 +1456,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     "balancers": [
                                         {
                                             "tag": "adblock-lb",
-                                            "selector": ["proxy-nl", "proxy-fr"],
+                                            "selector": ["proxy-nl", "proxy-fr-new"],
                                             "fallbackTag": "proxy-nl",
                                             "strategy": {
                                                 "type": "leastLoad",
@@ -1468,7 +1472,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                                             "value": 0,
                                                         },
                                                         {
-                                                            "match": "proxy-fr",
+                                                            "match": "proxy-fr-new",
                                                             "regexp": False,
                                                             "value": 10,
                                                         },
@@ -1535,16 +1539,14 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 }
                                 return cfg
 
-                            _ctag = requested_cluster(self)
+                            _ctag = canonical_cluster_tag(requested_cluster(self))
                             if _ctag in (
                                 "1",
                                 "true",
                                 "all",
                                 "nl",
-                                "fr",
                                 "fr-new",
                                 "de-new",
-                                "de",
                                 "uk",
                                 "fi",
                                 "white",
@@ -1578,18 +1580,13 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         _all.append(_c)
                                     _hymap = {
                                         "103.112.69.188": "proxy-nl",
-                                        "45.92.218.178": "proxy-fr",
                                         "62.60.249.228": "proxy-fi",
                                     }
                                     _pinmap = {
                                         "103.112.69.188": "1384cdd849ec74e8fe0cb4c5793fdff9758b412046fc208f686f165a64ab216b",
-                                        "45.92.218.178": "83beff34d998f9f5734f9ea7b8534b90a4d93e3621cbbc48a4f4d8d8424a1dc0",
                                         "62.60.249.228": "6b22e49604fc2c1964ef3fabc7b54449b68348ee2f070c6ce76e49bca69e623e",
                                     }
-                                    for _hip, _hn in (
-                                        ("103.112.69.188", "🇳🇱 Нидерланды"),
-                                        ("45.92.218.178", "🇫🇷 Франция"),
-                                    ):
+                                    for _hip, _hn in (("103.112.69.188", "🇳🇱 Нидерланды"),):
                                         _hc = json.loads(cluster_json)
                                         _fb = json.loads(
                                             json.dumps(
@@ -1705,7 +1702,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     raw = json.dumps(
                                         _build_adblock_config(), ensure_ascii=False
                                     ).encode("utf-8")
-                                elif _ctag in ("nl", "fr", "fr-new", "de", "uk", "fi"):
+                                elif _ctag in ("nl", "fr-new", "de-new", "uk", "fi"):
                                     _keep = "proxy-" + _ctag
                                     _cfg = json.loads(cluster_json)
                                     _cfg["outbounds"] = [
@@ -1754,7 +1751,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         "@103.112.69.188:", "@103.112.69.188.sslip.io:"
                                     )
                                     smart_clean_url = smart_clean_url.replace(
-                                        "@45.92.218.178:", "@45.92.218.178.sslip.io:"
+                                        "@107.161.160.220:", "@107.161.160.220.sslip.io:"
                                     )
                                     smart_clean_url = smart_clean_url.replace(
                                         "@85.137.249.225:", "@85.137.249.225.sslip.io:"
@@ -1800,25 +1797,6 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     + integrated_links
                                 )
                                 if is_incy_request(self):
-                                    # Happ's Germany entry is a generated full config and may not
-                                    # exist in Remnawave's share-link response. INCY needs a normal
-                                    # VLESS share link, so generate the equivalent endpoint only
-                                    # when the upstream list does not already contain it.
-                                    if not any("@92.119.166.192:" in link for link in all_links):
-                                        all_links.append(
-                                            reality_share_link(
-                                                uuid,
-                                                "92.119.166.192",
-                                                443,
-                                                sni,
-                                                pbk,
-                                                sid,
-                                                happ_label(
-                                                    "🇩🇪 Германия",
-                                                    "VLESS | TCP | Reality | JSON",
-                                                ),
-                                            )
-                                        )
                                     all_links = incy_compatible_links(all_links)
                                     all_links.append(incy_whitelist_routing_link())
                                 content = base64.b64encode("\n".join(all_links).encode("utf-8"))

@@ -8,6 +8,7 @@ from hamalivpn.sub_injector import (
     STANDALONE_CLUSTER_TAGS,
     TEMPORARY_LOCATION_FAILOVERS,
     apply_temporary_location_failovers,
+    canonical_cluster_tag,
     extract_subscription_token,
     happ_integrated_links,
     incy_compatible_link,
@@ -19,6 +20,7 @@ from hamalivpn.sub_injector import (
     is_incy_request,
     reality_share_link,
     remnawave_subscription_path,
+    remove_legacy_location_outbounds,
     requested_cluster,
 )
 
@@ -31,6 +33,54 @@ def test_happ_standalone_clusters_include_new_france_once() -> None:
 def test_happ_standalone_clusters_include_new_germany_once() -> None:
     assert STANDALONE_CLUSTER_TAGS.count("de-new") == 1
     assert CLUSTER_REMARKS["de-new"] == "🇩🇪 Германия (Новая)"
+
+
+def test_retired_france_and_germany_redirect_to_new_clusters() -> None:
+    assert "fr" not in STANDALONE_CLUSTER_TAGS
+    assert "de" not in STANDALONE_CLUSTER_TAGS
+    assert canonical_cluster_tag("fr") == "fr-new"
+    assert canonical_cluster_tag("de") == "de-new"
+
+
+def test_retired_outbounds_are_removed_from_profiles_and_selectors() -> None:
+    config = {
+        "outbounds": [
+            {"tag": "proxy-fr"},
+            {"tag": "proxy-fr-new"},
+            {"tag": "proxy-de"},
+            {"tag": "proxy-de-new"},
+        ],
+        "burstObservatory": {
+            "subjectSelector": ["proxy-fr", "proxy-fr-new", "proxy-de", "proxy-de-new"]
+        },
+        "routing": {
+            "balancers": [
+                {
+                    "selector": ["proxy-fr", "proxy-fr-new", "proxy-de", "proxy-de-new"],
+                    "strategy": {
+                        "settings": {
+                            "costs": [
+                                {"match": "^proxy-fr$"},
+                                {"match": "^proxy-fr-new$"},
+                                {"match": "^proxy-de$"},
+                                {"match": "^proxy-de-new$"},
+                            ]
+                        }
+                    },
+                }
+            ]
+        },
+    }
+
+    result = remove_legacy_location_outbounds(config)
+
+    assert [outbound["tag"] for outbound in result["outbounds"]] == [
+        "proxy-fr-new",
+        "proxy-de-new",
+    ]
+    serialized = json.dumps(result)
+    assert '"proxy-fr"' not in serialized
+    assert '"proxy-de"' not in serialized
 
 
 def test_temporary_location_failover_rewrites_only_finland_and_uk(monkeypatch) -> None:
