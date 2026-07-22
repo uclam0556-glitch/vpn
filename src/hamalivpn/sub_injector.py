@@ -982,6 +982,20 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     if "Автовыбор" not in dec_link:
                                         other_links.append(link)
 
+                            if not any("206.245.134.58" in link for link in premium_nl + premium_fr + premium_uk + premium_fi + reserve_links + other_links):
+                                if uuid and pbk and sni and sid:
+                                    reserve_links.append(
+                                        build_vless_link(
+                                            uuid=uuid,
+                                            ip="206.245.134.58",
+                                            port=8443,
+                                            sni=sni,
+                                            pbk=pbk,
+                                            sid=sid,
+                                            label=happ_label("🇩🇪 Германия (Test)", "VLESS | TCP | Reality | JSON")
+                                        )
+                                    )
+
                             cluster_json = """{
   "remarks": "🇪🇺 Автовыбор",
   "burstObservatory": {
