@@ -6,6 +6,8 @@ from hamalivpn.sub_injector import (
     CLUSTER_REMARKS,
     INCY_PROFILE_HEADERS,
     STANDALONE_CLUSTER_TAGS,
+    TEMPORARY_LOCATION_FAILOVERS,
+    apply_temporary_location_failovers,
     extract_subscription_token,
     happ_integrated_links,
     incy_compatible_link,
@@ -29,6 +31,41 @@ def test_happ_standalone_clusters_include_new_france_once() -> None:
 def test_happ_standalone_clusters_include_new_germany_once() -> None:
     assert STANDALONE_CLUSTER_TAGS.count("de-new") == 1
     assert CLUSTER_REMARKS["de-new"] == "🇩🇪 Германия (Новая)"
+
+
+def test_temporary_location_failover_rewrites_only_finland_and_uk(monkeypatch) -> None:
+    monkeypatch.setenv("TEMPORARY_FI_UK_FAILOVER", "1")
+    config = {
+        "outbounds": [
+            {"tag": "proxy-uk", "settings": {"vnext": [{"address": "uk", "port": 2053}]}},
+            {"tag": "proxy-fi", "settings": {"vnext": [{"address": "fi", "port": 443}]}},
+            {"tag": "proxy-fr", "settings": {"vnext": [{"address": "fr", "port": 443}]}},
+        ]
+    }
+
+    result = apply_temporary_location_failovers(config)
+
+    assert result["outbounds"][0]["settings"]["vnext"][0] == {
+        "address": TEMPORARY_LOCATION_FAILOVERS["proxy-uk"][0],
+        "port": 443,
+    }
+    assert result["outbounds"][1]["settings"]["vnext"][0] == {
+        "address": TEMPORARY_LOCATION_FAILOVERS["proxy-fi"][0],
+        "port": 443,
+    }
+    assert result["outbounds"][2]["settings"]["vnext"][0] == {
+        "address": "fr",
+        "port": 443,
+    }
+
+
+def test_temporary_location_failover_is_off_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("TEMPORARY_FI_UK_FAILOVER", raising=False)
+    config = {
+        "outbounds": [{"tag": "proxy-uk", "settings": {"vnext": [{"address": "uk", "port": 2053}]}}]
+    }
+
+    assert apply_temporary_location_failovers(config) == config
 
 
 def test_subscription_path_accepts_supported_public_tokens() -> None:

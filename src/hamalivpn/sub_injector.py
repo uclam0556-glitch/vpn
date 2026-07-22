@@ -34,6 +34,35 @@ INCY_PROFILE_HEADERS = {
     # below the 50 MB cap instead of being killed immediately after connect.
     "no-limit-enabled": "1",
 }
+TEMPORARY_LOCATION_FAILOVERS = {
+    # Keep the commercial location visible while its VPS is paused. sslip.io
+    # aliases prevent clients from collapsing it into the real fallback entry.
+    "proxy-uk": ("107.161.160.220.sslip.io", 443),
+    "proxy-fi": ("103.112.69.188.sslip.io", 443),
+}
+
+
+def temporary_location_failover_enabled():
+    return os.getenv("TEMPORARY_FI_UK_FAILOVER", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def apply_temporary_location_failovers(config):
+    if not temporary_location_failover_enabled():
+        return config
+    for outbound in config.get("outbounds", []):
+        target = TEMPORARY_LOCATION_FAILOVERS.get(outbound.get("tag"))
+        if not target:
+            continue
+        vnext = outbound.get("settings", {}).get("vnext", [])
+        if not vnext:
+            continue
+        vnext[0]["address"], vnext[0]["port"] = target
+    return config
 
 
 def b64_text(text):
@@ -1013,6 +1042,42 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         )
                                     )
 
+                            if (
+                                temporary_location_failover_enabled()
+                                and uuid
+                                and pbk
+                                and sni
+                                and sid
+                            ):
+                                premium_uk = [
+                                    reality_share_link(
+                                        uuid,
+                                        TEMPORARY_LOCATION_FAILOVERS["proxy-uk"][0],
+                                        TEMPORARY_LOCATION_FAILOVERS["proxy-uk"][1],
+                                        sni,
+                                        pbk,
+                                        sid,
+                                        happ_label(
+                                            "🇬🇧 Юнайтед Кингдом",
+                                            "VLESS | TCP | Reality | JSON",
+                                        ),
+                                    )
+                                ]
+                                premium_fi = [
+                                    reality_share_link(
+                                        uuid,
+                                        TEMPORARY_LOCATION_FAILOVERS["proxy-fi"][0],
+                                        TEMPORARY_LOCATION_FAILOVERS["proxy-fi"][1],
+                                        sni,
+                                        pbk,
+                                        sid,
+                                        happ_label(
+                                            "🇫🇮 Финляндия",
+                                            "VLESS | TCP | Reality | JSON",
+                                        ),
+                                    )
+                                ]
+
                             cluster_json = """{
   "remarks": "🇪🇺 Автовыбор",
   "burstObservatory": {
@@ -1183,6 +1248,11 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 .replace("{pbk}", pbk)
                                 .replace("{sni}", sni)
                                 .replace("{sid}", sid)
+                            )
+                            cluster_json = json.dumps(
+                                apply_temporary_location_failovers(json.loads(cluster_json)),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
                             )
 
                             def _build_whitelist_config():

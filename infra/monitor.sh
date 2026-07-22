@@ -4,10 +4,15 @@
 set -uo pipefail
 
 BASE_DIR=/opt/hamalivpn
+LOCATION_FAILOVER_ENV=/etc/hamalivpn/location-failover.conf
 ADMIN_ID="${HAMALI_ADMIN_ID:-5392719643}"
 STATE="${BASE_DIR}/.monitor_state"
 BACKUP_MAX_AGE_MINUTES="${HAMALI_BACKUP_MAX_AGE_MINUTES:-1800}"
 BOT_TOKEN=$(grep -E '^BOT_TOKEN=' "${BASE_DIR}/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')
+if [ -r "$LOCATION_FAILOVER_ENV" ]; then
+  # shellcheck disable=SC1090
+  source "$LOCATION_FAILOVER_ENV"
+fi
 
 alert() {
   [ -z "${BOT_TOKEN}" ] && return 0
@@ -102,12 +107,24 @@ done
 nodes=(
   "Франция новая|107.161.160.220|443"
   "Германия новая|206.245.134.58|443"
-  "Финляндия|62.60.249.228|443"
   "Нидерланды|103.112.69.188|443"
   "Франция|45.92.218.178|443"
   "Германия|92.119.166.192|443"
-  "United Kingdom|85.137.249.225|2053"
 )
+case "${TEMPORARY_FI_UK_FAILOVER:-0}" in
+  1|true|yes|on)
+    nodes+=(
+      "Финляндия (резерв через Нидерланды)|103.112.69.188|443"
+      "United Kingdom (резерв через Францию)|107.161.160.220|443"
+    )
+    ;;
+  *)
+    nodes+=(
+      "Финляндия|62.60.249.228|443"
+      "United Kingdom|85.137.249.225|2053"
+    )
+    ;;
+esac
 for node in "${nodes[@]}"; do
   IFS='|' read -r name host port <<<"$node"
   tcp_up "$host" "$port" || problems+="• нода ${name} (${host}:${port}) недоступна"$'\n'
