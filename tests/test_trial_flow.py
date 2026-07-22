@@ -19,14 +19,14 @@ def make_settings() -> Settings:
         database_url="sqlite+aiosqlite://",
         public_base_url="https://vpn.example.com",
         remnawave_mock=True,
-        test_access_days=3650,
+        trial_access_days=2,
         trial_traffic_gb=0,
         trial_device_limit=1,
     )
 
 
 @pytest.mark.asyncio
-async def test_trial_is_reissued_by_extending_the_same_subscription(session_factory) -> None:
+async def test_repeated_trial_tap_keeps_the_original_two_day_expiry(session_factory) -> None:
     settings = make_settings()
     gateway = MockRemnawaveClient(settings)
     async with session_factory() as session:
@@ -49,6 +49,7 @@ async def test_trial_is_reissued_by_extending_the_same_subscription(session_fact
         assert result.connect_url.host == "vpn.example.com"
         assert result.connect_url.path == f"/{subscription_short_code(subscription)}"
         original_subscription_id = result.subscription_id
+        original_expiry = subscription.expires_at
 
     async with session_factory() as session:
         renewed = await issue_trial(
@@ -64,6 +65,12 @@ async def test_trial_is_reissued_by_extending_the_same_subscription(session_fact
         assert subscription is not None
         assert subscription.status == SubscriptionStatus.active
         assert subscription.traffic_limit_gb == 0
+        assert subscription.expires_at == original_expiry
+        assert (
+            timedelta(days=1, hours=23)
+            <= renewed.expires_at - datetime.now(UTC)
+            <= timedelta(days=2)
+        )
 
 
 @pytest.mark.asyncio

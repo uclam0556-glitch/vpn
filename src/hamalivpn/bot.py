@@ -18,9 +18,9 @@ from aiogram.types import (
     CallbackQuery,
     FSInputFile,
     InlineKeyboardMarkup,
-    MenuButtonWebApp,
+    MenuButtonCommands,
     Message,
-    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
     WebAppInfo,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -44,7 +44,7 @@ from .services import (
     rotate_subscription_link,
     subscription_connect_url,
 )
-from .telegram_ui import inline_button, reply_button
+from .telegram_ui import inline_button
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -184,8 +184,19 @@ def welcome_text(name: str) -> str:
     return (
         f"{ce('brand')} <b>HamaliVPN</b>\n\n"
         f"Привет, <b>{name}</b>! Свободный интернет без сложных настроек.\n\n"
-        "Подключение, продление, устройства и бонусы — в одном Mini App.\n\n"
-        f"{ce('rocket')} <b>Откройте HamaliVPN и подключайтесь.</b>"
+        "Можно пользоваться Mini App или полностью управлять сервисом кнопками бота.\n\n"
+        f"{ce('rocket')} <b>Выберите нужное действие.</b>"
+    )
+
+
+def onboarding_gate_text() -> str:
+    return (
+        f"{ce('brand')} <b>Добро пожаловать в HamaliVPN</b>\n\n"
+        "Чтобы получить доступ к сервису и пробному периоду, подпишитесь на "
+        f"официальный канал <b>@{html.escape(news_channel_handle())}</b>.\n\n"
+        "<b>1.</b> Нажмите «Подписаться на канал».\n"
+        "<b>2.</b> Вернитесь сюда.\n"
+        "<b>3.</b> Нажмите «Проверить подписку»."
     )
 
 
@@ -217,9 +228,10 @@ def subscription_text(subscription: Subscription) -> str:
     )
 
 
-def trial_success_text(traffic_label: str, device_limit: int) -> str:
+def trial_success_text(traffic_label: str, device_limit: int, access_days: int) -> str:
     return (
         f"{ce('check')} <b>Пробный доступ активирован</b>\n\n"
+        f"Срок — <b>{access_days} дня</b>\n"
         f"{traffic_label} · {device_limit} устройство\n\n"
         "Откройте Mini App — подберём приложение и подключим VPN."
     )
@@ -268,40 +280,48 @@ def home_keyboard() -> InlineKeyboardMarkup:
     )
     builder.row(
         inline_button(
-            "Подключить", icon="lightning", style="success", callback_data="subscription:show"
+            "Моя подписка",
+            icon="shield",
+            style="success",
+            callback_data="subscription:show",
         ),
-        inline_button("Тарифы", icon="card", callback_data="menu:buy"),
+        inline_button("Купить VPN", icon="card", callback_data="menu:buy"),
     )
     builder.row(
-        inline_button("Пробный доступ", icon="gift", callback_data="trial:create"),
+        inline_button(
+            f"Тест на {settings.trial_access_days} дня",
+            icon="gift",
+            callback_data="trial:create",
+        ),
         inline_button("Бонусы", icon="sparkles", callback_data="menu:referrals"),
     )
     builder.row(
-        inline_button("Помощь", icon="support", callback_data="help:connect"),
+        inline_button("Инструкция", icon="book", callback_data="help:connect"),
+        inline_button("Поддержка", icon="support", url=support_url()),
     )
     return builder.as_markup()
 
 
-def main_reply_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                reply_button(
-                    "Открыть HamaliVPN",
-                    icon="rocket",
-                    style="primary",
-                    web_app=WebAppInfo(url=mini_app_url()),
-                )
-            ],
-            [
-                reply_button("Подключить", icon="lightning", style="success"),
-                reply_button("Помощь", icon="support"),
-            ],
-        ],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Выберите действие",
+def onboarding_gate_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        inline_button(
+            "Подписаться на канал",
+            icon="chat",
+            style="primary",
+            url=news_channel_url(),
+        )
     )
+    builder.row(
+        inline_button(
+            "Проверить подписку",
+            icon="check",
+            style="success",
+            callback_data="onboarding:check",
+        )
+    )
+    builder.row(inline_button("Нужна помощь", icon="support", url=support_url()))
+    return builder.as_markup()
 
 
 def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
@@ -384,6 +404,41 @@ def trial_gate_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+async def _has_existing_subscription(telegram_id: int) -> bool:
+    async with SessionFactory() as session:
+        return await get_latest_subscription(session, telegram_id) is not None
+
+
+async def _remove_legacy_reply_keyboard(message: Message) -> None:
+    """Remove the old persistent WebApp keyboard without leaving chat clutter."""
+
+    try:
+        cleanup = await message.answer("Обновляем меню…", reply_markup=ReplyKeyboardRemove())
+        await cleanup.delete()
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not remove legacy reply keyboard", exc_info=True)
+
+
+async def _send_start_card(
+    message: Message,
+    *,
+    text: str,
+    reply_markup: InlineKeyboardMarkup,
+) -> None:
+    if BANNER.exists():
+        try:
+            await message.answer_photo(
+                FSInputFile(BANNER),
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.HTML,
+            )
+            return
+        except Exception:  # noqa: BLE001
+            logger.warning("Не удалось отправить баннер", exc_info=True)
+    await message.answer(text, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
+
+
 # ── хендлеры ───────────────────────────────────────────────────────────────
 
 
@@ -425,20 +480,60 @@ async def start(message: Message, command: CommandObject) -> None:
                     session.add(new_customer)
                     await session.commit()
 
-    text = welcome_text(name)
-    kb = main_reply_keyboard()
-    if BANNER.exists():
-        try:
-            await message.answer_photo(
-                FSInputFile(BANNER),
-                caption=text,
-                reply_markup=kb,
-                parse_mode=ParseMode.HTML,
+    await _remove_legacy_reply_keyboard(message)
+    if message.from_user and not await _has_existing_subscription(message.from_user.id):
+        membership = await is_news_channel_member(message.bot, message.from_user.id)
+        if membership is not True:
+            await _send_start_card(
+                message,
+                text=onboarding_gate_text(),
+                reply_markup=onboarding_gate_keyboard(),
             )
             return
-        except Exception:  # noqa: BLE001
-            logger.warning("Не удалось отправить баннер", exc_info=True)
-    await message.answer(text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+    await _send_start_card(message, text=welcome_text(name), reply_markup=home_keyboard())
+
+
+@router.callback_query(F.data == "onboarding:check")
+async def onboarding_check(callback: CallbackQuery) -> None:
+    if callback.message is None:
+        await callback.answer()
+        return
+    has_subscription = await _has_existing_subscription(callback.from_user.id)
+    membership = await is_news_channel_member(callback.message.bot, callback.from_user.id)
+    if not has_subscription and membership is not True:
+        await callback.answer("Подписка пока не найдена", show_alert=False)
+        text = onboarding_gate_text()
+        if membership is None:
+            text += "\n\nПроверка временно недоступна. Попробуйте ещё раз через минуту."
+        if callback.message.photo:
+            await callback.message.edit_caption(
+                caption=text,
+                reply_markup=onboarding_gate_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await callback.message.edit_text(
+                text,
+                reply_markup=onboarding_gate_keyboard(),
+                parse_mode=ParseMode.HTML,
+            )
+        return
+
+    await callback.answer("Доступ открыт")
+    text = welcome_text(html.escape(callback.from_user.first_name or "друг"))
+    if callback.message.photo:
+        await callback.message.edit_caption(
+            caption=text,
+            reply_markup=home_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+    else:
+        await callback.message.edit_text(
+            text,
+            reply_markup=home_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
 
 
 @router.message(Command("id"))
@@ -683,7 +778,7 @@ async def create_trial(callback: CallbackQuery) -> None:
     traffic_label = (
         "∞ Безлимит" if result.traffic_limit_gb == 0 else f"{result.traffic_limit_gb} ГБ"
     )
-    text = trial_success_text(traffic_label, result.device_limit)
+    text = trial_success_text(traffic_label, result.device_limit, settings.trial_access_days)
     kb = subscription_keyboard(subscription)
     if callback.message.photo:
         await callback.message.edit_caption(
@@ -941,12 +1036,7 @@ async def main() -> None:
         await create_schema()
     bot = Bot(token=token)
     try:
-        await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(
-                text="Открыть HamaliVPN",
-                web_app=WebAppInfo(url=mini_app_url()),
-            )
-        )
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     except Exception:  # noqa: BLE001
         logger.warning("Не удалось сбросить menu button", exc_info=True)
     try:

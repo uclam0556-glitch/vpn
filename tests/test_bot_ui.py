@@ -8,9 +8,10 @@ from hamalivpn.bot import (
     admin_bot_commands,
     home_keyboard,
     is_news_channel_member,
-    main_reply_keyboard,
     mini_app_url,
     news_channel_url,
+    onboarding_gate_keyboard,
+    onboarding_gate_text,
     public_bot_commands,
     trial_gate_keyboard,
     welcome_text,
@@ -24,7 +25,7 @@ def test_welcome_is_compact_and_centers_mini_app() -> None:
 
     assert len(text) < 360
     assert "Mini App" in text
-    assert "Откройте HamaliVPN" in text
+    assert "Выберите нужное действие" in text
 
 
 def test_admin_command_menu_keeps_integration_tools_private() -> None:
@@ -39,9 +40,10 @@ def test_main_menu_has_one_primary_web_app_action() -> None:
     markup = home_keyboard()
     buttons = [button for row in markup.inline_keyboard for button in row]
 
-    assert len(buttons) == 6
+    assert len(buttons) == 7
     assert markup.inline_keyboard[0][0].web_app is not None
     assert markup.inline_keyboard[0][0].web_app.url.endswith("/tma/?screen=home")
+    assert any(button.text.endswith("Тест на 2 дня") for button in buttons)
     assert {button.callback_data for button in buttons if button.callback_data} >= {
         "subscription:show",
         "menu:buy",
@@ -51,20 +53,16 @@ def test_main_menu_has_one_primary_web_app_action() -> None:
     }
 
 
-def test_persistent_keyboard_keeps_three_quick_actions() -> None:
-    markup = main_reply_keyboard()
-    buttons = [button for row in markup.keyboard for button in row]
+def test_onboarding_gate_has_channel_check_and_support() -> None:
+    markup = onboarding_gate_keyboard()
+    buttons = [button for row in markup.inline_keyboard for button in row]
 
-    assert markup.is_persistent is True
-    assert markup.resize_keyboard is True
-    assert [button.text.split()[-1] for button in buttons] == [
-        "HamaliVPN",
-        "Подключить",
-        "Помощь",
-    ]
+    assert "официальный канал" in onboarding_gate_text()
+    assert buttons[0].url == news_channel_url()
     assert buttons[0].style == "primary"
+    assert buttons[1].callback_data == "onboarding:check"
     assert buttons[1].style == "success"
-    assert buttons[0].web_app is not None
+    assert buttons[2].url is not None
 
 
 def test_tariffs_keep_direct_payments_and_offer_mini_app() -> None:

@@ -96,7 +96,8 @@ async def issue_trial(
     )
     if customer.is_blocked:
         raise CustomerBlockedError
-    expires_at = datetime.now(UTC) + timedelta(days=settings.test_access_days)
+    now = datetime.now(UTC)
+    expires_at = now + timedelta(days=settings.trial_access_days)
 
     if customer.trial_used:
         existing = await session.scalar(
@@ -109,63 +110,24 @@ async def issue_trial(
             .limit(1)
             .with_for_update()
         )
-        if existing is None or not existing.remnawave_uuid:
+        if (
+            existing is None
+            or not existing.remnawave_uuid
+            or not existing.subscription_url
+            or existing.expires_at is None
+            or as_utc(existing.expires_at) <= now
+        ):
             raise TrialAlreadyUsedError
-
-        try:
-            remote = await gateway.update_user_access(
-                user_uuid=existing.remnawave_uuid,
-                expires_at=expires_at,
-                device_limit=settings.trial_device_limit,
-                traffic_limit_bytes=settings.trial_traffic_gb * 1024**3,
-                squads=settings.squad_uuids,
-            )
-        except RemnawaveNotFoundError:
-            # Юзера удалили в Remnawave — пересоздаём, а не падаем с ошибкой.
-            remote = await gateway.create_user(
-                username=_remote_username(telegram_id),
-                telegram_id=telegram_id,
-                expires_at=expires_at,
-                device_limit=settings.trial_device_limit,
-                traffic_limit_bytes=settings.trial_traffic_gb * 1024**3,
-                squads=settings.squad_uuids,
-                description=f"HamaliVpn trial; local_subscription={existing.id}",
-            )
-        existing.status = SubscriptionStatus.active
-        existing.expires_at = expires_at
-        existing.device_limit = settings.trial_device_limit
-        existing.traffic_limit_gb = settings.trial_traffic_gb
-        existing.subscription_url = remote.subscription_url
-        existing.remnawave_short_uuid = remote.short_uuid
-        existing.remnawave_uuid = remote.uuid
-        await sync_subscription_device_slots(
-            session,
-            gateway,
-            settings,
-            existing,
-            actor=f"telegram:{telegram_id}",
-        )
-        session.add(
-            AuditLog(
-                actor=f"telegram:{telegram_id}",
-                action="trial.extended",
-                entity_type="subscription",
-                entity_id=existing.id,
-                details={
-                    "remnawave_uuid": remote.uuid,
-                    "expires_at": expires_at.isoformat(),
-                },
-            )
-        )
-        await session.commit()
+        # Repeated taps must be idempotent: return the still-active trial
+        # without moving its expiry date or touching Remnawave.
         return TrialResult(
             subscription_id=existing.id,
             access_token=existing.access_token,
-            subscription_url=remote.subscription_url,
+            subscription_url=existing.subscription_url,
             connect_url=subscription_connect_url(settings, existing),
-            expires_at=expires_at,
-            device_limit=settings.trial_device_limit,
-            traffic_limit_gb=settings.trial_traffic_gb,
+            expires_at=as_utc(existing.expires_at),
+            device_limit=existing.device_limit,
+            traffic_limit_gb=existing.traffic_limit_gb,
         )
 
     access_token = secrets.token_urlsafe(32)
@@ -282,8 +244,12 @@ async def refresh_subscription_access(
     if not subscription.remnawave_uuid:
         raise SubscriptionNotFoundError
 
-    minimum_expiry = datetime.now(UTC) + timedelta(days=settings.test_access_days)
-    expires_at = max(as_utc(subscription.expires_at), minimum_expiry)
+    if subscription.expires_at is None:
+        raise SubscriptionNotFoundError
+    # Refresh repairs the remote profile but never grants additional paid or
+    # trial time. Subscription duration is changed only by trial issuance or a
+    # successful payment.
+    expires_at = as_utc(subscription.expires_at)
     try:
         remote = await gateway.update_user_access(
             user_uuid=subscription.remnawave_uuid,

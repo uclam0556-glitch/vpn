@@ -405,8 +405,8 @@ async def successful_payment(message: Message) -> None:
         if subscription:
             now = datetime.now(UTC)
             if provisioned_now:
-                # issue_trial grants the long-lived test window (test_access_days);
-                # a paid plan must measure its term from "now", not from that sentinel.
+                # A freshly provisioned trial is converted to the paid plan, so
+                # the paid term starts now rather than after the trial window.
                 base = now
             else:
                 # Top up an existing subscription: extend from the later of "now"
