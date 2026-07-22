@@ -39,6 +39,11 @@ services:
       REDIS_URL: redis://redis:6379/0
       PYTHONPATH: /app/src
       PORTAL_DIST_DIR: /app/portal-webapp/dist
+      # Commercial invariant: a Telegram account receives exactly one
+      # two-day trial with a single device. Explicit values override stale
+      # host .env settings during every container recreation.
+      TRIAL_ACCESS_DAYS: "2"
+      TRIAL_DEVICE_LIMIT: "1"
     depends_on:
       postgres:
         condition: service_healthy

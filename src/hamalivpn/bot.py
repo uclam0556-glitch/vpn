@@ -41,7 +41,6 @@ from .services import (
     issue_trial,
     record_subscription_health,
     refresh_subscription_access,
-    rotate_subscription_link,
     subscription_connect_url,
 )
 from .telegram_ui import inline_button
@@ -268,7 +267,7 @@ def refresh_success_text(response_ms: int) -> str:
 # ── клавиатуры ─────────────────────────────────────────────────────────────
 
 
-def home_keyboard() -> InlineKeyboardMarkup:
+def home_keyboard(*, trial_available: bool = True) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         inline_button(
@@ -287,14 +286,19 @@ def home_keyboard() -> InlineKeyboardMarkup:
         ),
         inline_button("Купить VPN", icon="card", callback_data="menu:buy"),
     )
-    builder.row(
-        inline_button(
-            f"Тест на {settings.trial_access_days} дня",
-            icon="gift",
-            callback_data="trial:create",
-        ),
-        inline_button("Бонусы", icon="sparkles", callback_data="menu:referrals"),
-    )
+    if trial_available:
+        builder.row(
+            inline_button(
+                f"Тест на {settings.trial_access_days} дня",
+                icon="gift",
+                callback_data="trial:create",
+            ),
+            inline_button("Бонусы", icon="sparkles", callback_data="menu:referrals"),
+        )
+    else:
+        builder.row(
+            inline_button("Бонусы и подарки", icon="sparkles", callback_data="menu:referrals")
+        )
     builder.row(
         inline_button("Инструкция", icon="book", callback_data="help:connect"),
         inline_button("Поддержка", icon="support", url=support_url()),
@@ -343,8 +347,12 @@ def subscription_keyboard(subscription: Subscription) -> InlineKeyboardMarkup:
         )
     )
     builder.row(
-        inline_button("Продлить", icon="card", callback_data="menu:buy"),
-        inline_button("Обновить ссылку", icon="refresh", callback_data="subscription:rotate"),
+        inline_button(
+            "Продлить подписку",
+            icon="card",
+            style="success",
+            callback_data="menu:buy",
+        ),
     )
     builder.row(
         inline_button("Назад", icon="home", callback_data="menu:home"),
@@ -407,6 +415,19 @@ def trial_gate_keyboard() -> InlineKeyboardMarkup:
 async def _has_existing_subscription(telegram_id: int) -> bool:
     async with SessionFactory() as session:
         return await get_latest_subscription(session, telegram_id) is not None
+
+
+async def _trial_is_available(telegram_id: int) -> bool:
+    async with SessionFactory() as session:
+        customer = await session.scalar(select(Customer).where(Customer.telegram_id == telegram_id))
+        if customer is None:
+            return True
+        if customer.trial_used:
+            return False
+        subscription_id = await session.scalar(
+            select(Subscription.id).where(Subscription.customer_id == customer.id).limit(1)
+        )
+        return subscription_id is None
 
 
 async def _remove_legacy_reply_keyboard(message: Message) -> None:
@@ -481,7 +502,10 @@ async def start(message: Message, command: CommandObject) -> None:
                     await session.commit()
 
     await _remove_legacy_reply_keyboard(message)
-    if message.from_user and not await _has_existing_subscription(message.from_user.id):
+    has_subscription = bool(
+        message.from_user and await _has_existing_subscription(message.from_user.id)
+    )
+    if message.from_user and not has_subscription:
         membership = await is_news_channel_member(message.bot, message.from_user.id)
         if membership is not True:
             await _send_start_card(
@@ -491,7 +515,16 @@ async def start(message: Message, command: CommandObject) -> None:
             )
             return
 
-    await _send_start_card(message, text=welcome_text(name), reply_markup=home_keyboard())
+    trial_available = bool(
+        message.from_user
+        and not has_subscription
+        and await _trial_is_available(message.from_user.id)
+    )
+    await _send_start_card(
+        message,
+        text=welcome_text(name),
+        reply_markup=home_keyboard(trial_available=trial_available),
+    )
 
 
 @router.callback_query(F.data == "onboarding:check")
@@ -522,16 +555,18 @@ async def onboarding_check(callback: CallbackQuery) -> None:
 
     await callback.answer("Доступ открыт")
     text = welcome_text(html.escape(callback.from_user.first_name or "друг"))
+    trial_available = not has_subscription and await _trial_is_available(callback.from_user.id)
+    kb = home_keyboard(trial_available=trial_available)
     if callback.message.photo:
         await callback.message.edit_caption(
             caption=text,
-            reply_markup=home_keyboard(),
+            reply_markup=kb,
             parse_mode=ParseMode.HTML,
         )
     else:
         await callback.message.edit_text(
             text,
-            reply_markup=home_keyboard(),
+            reply_markup=kb,
             parse_mode=ParseMode.HTML,
         )
 
@@ -656,7 +691,7 @@ async def menu_home(callback: CallbackQuery) -> None:
         return
     name = html.escape(callback.from_user.first_name or "друг")
     text = welcome_text(name)
-    kb = home_keyboard()
+    kb = home_keyboard(trial_available=await _trial_is_available(callback.from_user.id))
     # Если текущее сообщение — фото, редактируем подпись, иначе текст
     if callback.message.photo:
         await callback.message.edit_caption(
@@ -897,71 +932,12 @@ async def refresh_subscription(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "subscription:rotate")
 async def rotate_subscription(callback: CallbackQuery) -> None:
-    await callback.answer("🔁 Генерирую новую ссылку…")
-    if callback.message is None:
-        return
-    gateway = make_remnawave_gateway(settings)
-    try:
-        async with SessionFactory() as session:
-            subscription = await get_latest_subscription(session, callback.from_user.id)
-            if subscription is None:
-                text = "Подписка ещё не создана."
-                kb = home_keyboard()
-                if callback.message.photo:
-                    await callback.message.edit_caption(
-                        caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
-                    )
-                else:
-                    await callback.message.edit_text(
-                        text, reply_markup=kb, parse_mode=ParseMode.HTML
-                    )
-                return
-            result = await rotate_subscription_link(
-                session,
-                gateway,
-                settings,
-                subscription,
-                actor=f"telegram:{callback.from_user.id}",
-            )
-    except (RemnawaveError, SubscriptionNotFoundError):
-        logger.exception("Could not rotate subscription link")
-        text = "⚠️ <b>Не удалось создать новую ссылку.</b>\n\nПопробуй через минуту."
-        kb = back_keyboard()
-        if callback.message.photo:
-            await callback.message.edit_caption(
-                caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
-            )
-        else:
-            await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
-
-    if not result.is_healthy:
-        text = (
-            "🔁 <b>Новая ссылка создана</b>\n\n"
-            f"⚠️ {html.escape(result.message)}.\n\n"
-            "Профиль ещё инициализируется — попробуй подключиться через минуту."
-        )
-        kb = subscription_keyboard(subscription)
-        if callback.message.photo:
-            await callback.message.edit_caption(
-                caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
-            )
-        else:
-            await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
-        return
-
-    text = (
-        "✅ <b>Новая ссылка готова!</b>\n\n"
-        "Старая ссылка отключена.\n"
-        f"Нажми «{ce('connect')} Подключить устройство» и импортируй профиль заново."
+    # Old messages may still contain this callback after deployment. Keep it
+    # harmless instead of rotating/revoking a working customer link.
+    await callback.answer(
+        "Ссылка обновляется автоматически — создавать новую не требуется.",
+        show_alert=True,
     )
-    kb = subscription_keyboard(subscription)
-    if callback.message.photo:
-        await callback.message.edit_caption(
-            caption=text, reply_markup=kb, parse_mode=ParseMode.HTML
-        )
-    else:
-        await callback.message.edit_text(text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
 @router.callback_query(F.data == "help:connect")

@@ -13,6 +13,7 @@ from hamalivpn.bot import (
     onboarding_gate_keyboard,
     onboarding_gate_text,
     public_bot_commands,
+    subscription_keyboard,
     trial_gate_keyboard,
     welcome_text,
 )
@@ -51,6 +52,23 @@ def test_main_menu_has_one_primary_web_app_action() -> None:
         "menu:referrals",
         "help:connect",
     }
+
+
+def test_subscription_menu_cannot_rotate_a_working_link() -> None:
+    subscription = SimpleNamespace(access_token="stable-access-token")
+    markup = subscription_keyboard(subscription)
+    buttons = [button for row in markup.inline_keyboard for button in row]
+
+    assert not any(button.callback_data == "subscription:rotate" for button in buttons)
+    assert any(button.callback_data == "menu:buy" for button in buttons)
+
+
+def test_used_trial_is_removed_from_personalized_home_menu() -> None:
+    markup = home_keyboard(trial_available=False)
+    buttons = [button for row in markup.inline_keyboard for button in row]
+
+    assert not any(button.callback_data == "trial:create" for button in buttons)
+    assert any(button.callback_data == "menu:referrals" for button in buttons)
 
 
 def test_onboarding_gate_has_channel_check_and_support() -> None:

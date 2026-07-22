@@ -4,9 +4,10 @@ import pytest
 from sqlalchemy import select
 
 from hamalivpn.config import Settings
-from hamalivpn.models import Customer, Subscription, SubscriptionStatus
+from hamalivpn.models import Customer, Subscription, SubscriptionStatus, as_utc
 from hamalivpn.remnawave import MockRemnawaveClient
 from hamalivpn.services import (
+    TrialAlreadyUsedError,
     expire_due_subscriptions,
     get_subscription_by_token,
     issue_trial,
@@ -26,7 +27,7 @@ def make_settings() -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_repeated_trial_tap_keeps_the_original_two_day_expiry(session_factory) -> None:
+async def test_repeated_trial_tap_is_rejected_without_changing_expiry(session_factory) -> None:
     settings = make_settings()
     gateway = MockRemnawaveClient(settings)
     async with session_factory() as session:
@@ -52,25 +53,72 @@ async def test_repeated_trial_tap_keeps_the_original_two_day_expiry(session_fact
         original_expiry = subscription.expires_at
 
     async with session_factory() as session:
-        renewed = await issue_trial(
-            session,
-            gateway,
-            settings,
-            telegram_id=777,
-            telegram_username="tester",
-            full_name="Test User",
-        )
-        subscription = await session.get(Subscription, renewed.subscription_id)
-        assert renewed.subscription_id == original_subscription_id
+        with pytest.raises(TrialAlreadyUsedError):
+            await issue_trial(
+                session,
+                gateway,
+                settings,
+                telegram_id=777,
+                telegram_username="tester",
+                full_name="Test User",
+            )
+        subscription = await session.get(Subscription, original_subscription_id)
         assert subscription is not None
         assert subscription.status == SubscriptionStatus.active
         assert subscription.traffic_limit_gb == 0
         assert subscription.expires_at == original_expiry
         assert (
             timedelta(days=1, hours=23)
-            <= renewed.expires_at - datetime.now(UTC)
+            <= as_utc(subscription.expires_at) - datetime.now(UTC)
             <= timedelta(days=2)
         )
+
+
+@pytest.mark.asyncio
+async def test_trial_history_repairs_false_customer_flag_and_blocks_reissue(
+    session_factory,
+) -> None:
+    settings = make_settings()
+    gateway = MockRemnawaveClient(settings)
+    async with session_factory() as session:
+        customer = Customer(telegram_id=779, full_name="Imported User", trial_used=False)
+        session.add(customer)
+        await session.flush()
+        session.add(
+            Subscription(
+                customer_id=customer.id,
+                plan_code="trial",
+                status=SubscriptionStatus.expired,
+                access_token="historical-trial-token",
+                device_limit=1,
+                traffic_limit_gb=0,
+                expires_at=datetime.now(UTC) - timedelta(days=10),
+            )
+        )
+        await session.commit()
+
+        with pytest.raises(TrialAlreadyUsedError):
+            await issue_trial(
+                session,
+                gateway,
+                settings,
+                telegram_id=779,
+                telegram_username="imported",
+                full_name="Imported User",
+            )
+
+        await session.refresh(customer)
+        trials = (
+            (
+                await session.execute(
+                    select(Subscription).where(Subscription.customer_id == customer.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert customer.trial_used is True
+        assert len(trials) == 1
 
 
 @pytest.mark.asyncio

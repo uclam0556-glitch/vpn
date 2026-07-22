@@ -99,36 +99,34 @@ async def issue_trial(
     now = datetime.now(UTC)
     expires_at = now + timedelta(days=settings.trial_access_days)
 
-    if customer.trial_used:
-        existing = await session.scalar(
-            select(Subscription)
-            .where(
-                Subscription.customer_id == customer.id,
-                Subscription.plan_code == "trial",
+    historical_trial = await session.scalar(
+        select(Subscription)
+        .where(
+            Subscription.customer_id == customer.id,
+            Subscription.plan_code == "trial",
+        )
+        .order_by(desc(Subscription.created_at))
+        .limit(1)
+        .with_for_update()
+    )
+    if customer.trial_used or historical_trial is not None:
+        # The subscription history is the second source of truth. It prevents
+        # another trial even if an old import left ``trial_used`` inconsistent.
+        # Persist the repaired flag before raising so restarts cannot reopen the
+        # trial path. A repeated tap never touches expiry or Remnawave.
+        if not customer.trial_used:
+            customer.trial_used = True
+            session.add(
+                AuditLog(
+                    actor="system:trial-guard",
+                    action="trial.flag_reconciled",
+                    entity_type="customer",
+                    entity_id=str(customer.id),
+                    details={"subscription_id": historical_trial.id},
+                )
             )
-            .order_by(desc(Subscription.created_at))
-            .limit(1)
-            .with_for_update()
-        )
-        if (
-            existing is None
-            or not existing.remnawave_uuid
-            or not existing.subscription_url
-            or existing.expires_at is None
-            or as_utc(existing.expires_at) <= now
-        ):
-            raise TrialAlreadyUsedError
-        # Repeated taps must be idempotent: return the still-active trial
-        # without moving its expiry date or touching Remnawave.
-        return TrialResult(
-            subscription_id=existing.id,
-            access_token=existing.access_token,
-            subscription_url=existing.subscription_url,
-            connect_url=subscription_connect_url(settings, existing),
-            expires_at=as_utc(existing.expires_at),
-            device_limit=existing.device_limit,
-            traffic_limit_gb=existing.traffic_limit_gb,
-        )
+            await session.commit()
+        raise TrialAlreadyUsedError
 
     access_token = secrets.token_urlsafe(32)
     subscription = Subscription(

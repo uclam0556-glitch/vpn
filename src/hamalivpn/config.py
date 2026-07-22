@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,9 +51,9 @@ class Settings(BaseSettings):
     remnawave_internal_squads: str = ""
 
     # Trial access is issued once; repeated button taps never move the expiry.
-    trial_access_days: int = 2
+    trial_access_days: Literal[2] = 2
     trial_traffic_gb: int = 0
-    trial_device_limit: int = 1
+    trial_device_limit: Literal[1] = 1
 
     default_plan_code: str = "start"
     subscription_name: str = "HamaliVpn"
