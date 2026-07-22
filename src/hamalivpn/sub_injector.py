@@ -985,14 +985,14 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                             if not any("206.245.134.58" in link for link in premium_nl + premium_fr + premium_uk + premium_fi + reserve_links + other_links):
                                 if uuid and pbk and sni and sid:
                                     reserve_links.append(
-                                        build_vless_link(
-                                            uuid=uuid,
-                                            ip="206.245.134.58",
-                                            port=8443,
-                                            sni=sni,
-                                            pbk=pbk,
-                                            sid=sid,
-                                            label=happ_label("🇩🇪 Германия (Test)", "VLESS | TCP | Reality | JSON")
+                                        reality_share_link(
+                                            uuid,
+                                            "206.245.134.58",
+                                            8443,
+                                            sni,
+                                            pbk,
+                                            sid,
+                                            happ_label("🇩🇪 Германия (Test)", "VLESS | TCP | Reality | JSON")
                                         )
                                     )
 
