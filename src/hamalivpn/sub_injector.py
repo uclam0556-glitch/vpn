@@ -954,6 +954,12 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         + "#"
                                         + happ_label("🇩🇪 Германия", "VLESS | TCP | Reality | JSON")
                                     )
+                                elif "206.245.134.58" in link:
+                                    reserve_links.append(
+                                        clean_url
+                                        + "#"
+                                        + happ_label("🇩🇪 Германия (Test)", "VLESS | TCP | Reality | JSON")
+                                    )
                                 elif "67.159.56.63" in link:
                                     # This route is currently unreachable from affected Russian networks.
                                     # Keep it out of every public profile until provider routing is fixed.
@@ -986,7 +992,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
       "sampling": 2,
       "timeout": "5s"
     },
-    "subjectSelector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-uk", "proxy-fi", "proxy-de"]
+    "subjectSelector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-uk", "proxy-fi", "proxy-de", "proxy-de-test"]
   },
   "dns": {
     "queryStrategy": "UseIPv4",
@@ -1043,6 +1049,12 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     },
     {
       "protocol": "vless",
+      "settings": { "vnext": [{ "address": "206.245.134.58", "port": 8443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
+      "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
+      "tag": "proxy-de-test"
+    },
+    {
+      "protocol": "vless",
       "settings": { "vnext": [{ "address": "62.60.249.228", "port": 443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
       "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
       "tag": "proxy-fi"
@@ -1054,7 +1066,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     "balancers": [
       {
         "fallbackTag": "proxy-nl",
-        "selector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-uk", "proxy-fi", "proxy-de"],
+        "selector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-uk", "proxy-fi", "proxy-de", "proxy-de-test"],
         "strategy": {
           "type": "leastLoad",
           "settings": {
@@ -1068,7 +1080,8 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
               { "match": "^proxy-fr-new$", "regexp": true, "value": 5 },
               { "match": "^proxy-uk$", "regexp": true, "value": 25 },
               { "match": "^proxy-fi$", "regexp": true, "value": 40 },
-              { "match": "^proxy-de$", "regexp": true, "value": 80 }
+              { "match": "^proxy-de$", "regexp": true, "value": 80 },
+              { "match": "^proxy-de-test$", "regexp": true, "value": 75 }
             ]
           }
         },
