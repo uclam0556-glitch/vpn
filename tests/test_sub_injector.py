@@ -26,6 +26,11 @@ def test_happ_standalone_clusters_include_new_france_once() -> None:
     assert CLUSTER_REMARKS["fr-new"] == "🇫🇷 Франция (Новая)"
 
 
+def test_happ_standalone_clusters_include_new_germany_once() -> None:
+    assert STANDALONE_CLUSTER_TAGS.count("de-new") == 1
+    assert CLUSTER_REMARKS["de-new"] == "🇩🇪 Германия (Новая)"
+
+
 def test_subscription_path_accepts_supported_public_tokens() -> None:
     token = "Abc_1234-valid-token"
 

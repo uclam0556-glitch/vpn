@@ -14,11 +14,12 @@ PROFILE_NOTE = (
     "Нажмите ⓘ для перехода в бот: продление, поддержка и управление подпиской. "
     "Спасибо, что выбрали HamaliVPN. Если возникнут проблемы — напишите нам."
 )
-STANDALONE_CLUSTER_TAGS = ("nl", "fr", "fr-new", "uk", "fi", "de")
+STANDALONE_CLUSTER_TAGS = ("nl", "fr", "fr-new", "de-new", "uk", "fi", "de")
 CLUSTER_REMARKS = {
     "nl": "🇳🇱 Нидерланды",
     "fr": "🇫🇷 Франция",
     "fr-new": "🇫🇷 Франция (Новая)",
+    "de-new": "🇩🇪 Германия (Новая)",
     "de": "🇩🇪 Германия",
     "uk": "🇬🇧 Юнайтед Кингдом",
     "fi": "🇫🇮 Финляндия",
@@ -914,6 +915,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                             premium_links = []
                             premium_nl = []
                             premium_fr = []
+                            premium_de_new = []
                             premium_uk = []
                             premium_fi = []
                             reserve_links = []
@@ -955,10 +957,13 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         + happ_label("🇩🇪 Германия", "VLESS | TCP | Reality | JSON")
                                     )
                                 elif "206.245.134.58" in link:
-                                    reserve_links.append(
+                                    premium_de_new.append(
                                         clean_url
                                         + "#"
-                                        + happ_label("🇩🇪 Германия (Test)", "VLESS | TCP | Reality | JSON")
+                                        + happ_label(
+                                            "🇩🇪 Германия (Новая)",
+                                            "VLESS | TCP | Reality | JSON",
+                                        )
                                     )
                                 elif "67.159.56.63" in link:
                                     # This route is currently unreachable from affected Russian networks.
@@ -982,9 +987,18 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     if "Автовыбор" not in dec_link:
                                         other_links.append(link)
 
-                            if not any("206.245.134.58" in link for link in premium_nl + premium_fr + premium_uk + premium_fi + reserve_links + other_links):
+                            if not any(
+                                "206.245.134.58" in link
+                                for link in premium_nl
+                                + premium_fr
+                                + premium_de_new
+                                + premium_uk
+                                + premium_fi
+                                + reserve_links
+                                + other_links
+                            ):
                                 if uuid and pbk and sni and sid:
-                                    reserve_links.append(
+                                    premium_de_new.append(
                                         reality_share_link(
                                             uuid,
                                             "206.245.134.58",
@@ -992,7 +1006,10 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                             sni,
                                             pbk,
                                             sid,
-                                            happ_label("🇩🇪 Германия 2", "VLESS | TCP | Reality | JSON")
+                                            happ_label(
+                                                "🇩🇪 Германия (Новая)",
+                                                "VLESS | TCP | Reality | JSON",
+                                            ),
                                         )
                                     )
 
@@ -1006,7 +1023,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
       "sampling": 2,
       "timeout": "5s"
     },
-    "subjectSelector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-uk", "proxy-fi", "proxy-de", "proxy-de-test"]
+    "subjectSelector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi", "proxy-de"]
   },
   "dns": {
     "queryStrategy": "UseIPv4",
@@ -1063,9 +1080,9 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     },
     {
       "protocol": "vless",
-      "settings": { "vnext": [{ "address": "206.245.134.58", "port": 8443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
+      "settings": { "vnext": [{ "address": "206.245.134.58", "port": 443, "users": [{ "encryption": "none", "flow": "xtls-rprx-vision", "id": "{uuid}" }] }] },
       "streamSettings": { "network": "tcp", "security": "reality", "realitySettings": { "fingerprint": "firefox", "publicKey": "{pbk}", "serverName": "{sni}", "shortId": "{sid}", "spiderX": "/" }, "tcpSettings": {} },
-      "tag": "proxy-de-test"
+      "tag": "proxy-de-new"
     },
     {
       "protocol": "vless",
@@ -1080,7 +1097,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     "balancers": [
       {
         "fallbackTag": "proxy-nl",
-        "selector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-uk", "proxy-fi", "proxy-de", "proxy-de-test"],
+        "selector": ["proxy-nl", "proxy-fr", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi", "proxy-de"],
         "strategy": {
           "type": "leastLoad",
           "settings": {
@@ -1095,7 +1112,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
               { "match": "^proxy-uk$", "regexp": true, "value": 25 },
               { "match": "^proxy-fi$", "regexp": true, "value": 40 },
               { "match": "^proxy-de$", "regexp": true, "value": 80 },
-              { "match": "^proxy-de-test$", "regexp": true, "value": 75 }
+              { "match": "^proxy-de-new$", "regexp": true, "value": 15 }
             ]
           }
         },
@@ -1456,6 +1473,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 "nl",
                                 "fr",
                                 "fr-new",
+                                "de-new",
                                 "de",
                                 "uk",
                                 "fi",
@@ -1645,7 +1663,13 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 return
                             else:
                                 # Final order: fastest/brand-first VLESS, then proven LTE, then other.
-                                premium_links = premium_nl + premium_fr + premium_uk + premium_fi
+                                premium_links = (
+                                    premium_nl
+                                    + premium_fr
+                                    + premium_de_new
+                                    + premium_uk
+                                    + premium_fi
+                                )
                                 smart_links = []
                                 smart_source = premium_nl or premium_fr or premium_uk or premium_fi
                                 if smart_source:
