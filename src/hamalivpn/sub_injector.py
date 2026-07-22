@@ -988,7 +988,7 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                         reality_share_link(
                                             uuid,
                                             "206.245.134.58",
-                                            8443,
+                                            443,
                                             sni,
                                             pbk,
                                             sid,
