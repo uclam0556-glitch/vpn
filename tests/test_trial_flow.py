@@ -26,6 +26,13 @@ def make_settings() -> Settings:
     )
 
 
+def test_trial_policy_accepts_container_environment_strings() -> None:
+    settings = Settings(trial_access_days="2", trial_device_limit="1")  # type: ignore[arg-type]
+
+    assert settings.trial_access_days == 2
+    assert settings.trial_device_limit == 1
+
+
 @pytest.mark.asyncio
 async def test_repeated_trial_tap_is_rejected_without_changing_expiry(session_factory) -> None:
     settings = make_settings()
