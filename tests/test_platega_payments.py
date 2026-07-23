@@ -30,7 +30,7 @@ class _FakeAsyncClient:
 
     async def post(self, url: str, *, json: dict, headers: dict):
         assert url.endswith("/v2/transaction/process")
-        assert json["paymentDetails"] == {"amount": 150, "currency": "RUB"}
+        assert json["paymentDetails"] == {"amount": 200, "currency": "RUB"}
         assert json["payload"] == "order_123"
         assert headers == {"X-MerchantId": "merchant_123", "X-Secret": "secret_123"}
         return _FakePlategaResponse()
@@ -46,7 +46,7 @@ async def test_create_platega_link_accepts_official_redirect_field(monkeypatch) 
 
     data = await payments.create_platega_link(
         order_id="order_123",
-        amount=150,
+        amount=200,
         description="HamaliVPN · 1 месяц",
         telegram_id=5392719643,
         username="khamid",
@@ -60,3 +60,18 @@ def test_payment_plan_device_limits_match_bot_and_portal_webhook() -> None:
     for code, plan in payments.PLANS.items():
         assert FK_PLAN_DAYS[code] == plan["days"]
         assert FK_PLAN_DEVICES[code] == plan["devices"]
+
+
+def test_commercial_tariffs_match_requested_prices_and_device_policy() -> None:
+    assert payments.PLANS["1_month"] == {
+        "name": "1 месяц · 1 устройство",
+        "price": 200,
+        "days": 30,
+        "devices": 1,
+    }
+    assert payments.PLANS["3_months"]["price"] == 500
+    assert payments.PLANS["6_months"]["price"] == 900
+    assert all(
+        payments.PLANS[code]["devices"] == 3
+        for code in ("3_months", "6_months", "12_months")
+    )

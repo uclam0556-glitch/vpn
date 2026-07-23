@@ -2187,10 +2187,10 @@ FK_PLAN_DAYS = {
 }
 FK_PLAN_DEVICES = {
     "1_month": 1,
-    "2_months": 3,
-    "3_months": 5,
-    "6_months": 5,
-    "12_months": 5,
+    "2_months": 1,
+    "3_months": 3,
+    "6_months": 3,
+    "12_months": 3,
 }
 FK_PLAN_NAMES = {
     "1_month": "1 месяц",

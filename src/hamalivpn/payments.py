@@ -41,11 +41,11 @@ settings = get_settings()
 router = Router()
 
 PLANS = {
-    "1_month": {"name": "1 месяц · 1 устройство", "price": 150, "days": 30, "devices": 1},
-    "2_months": {"name": "2 месяца · 3 устройства", "price": 300, "days": 60, "devices": 3},
-    "3_months": {"name": "3 месяца · 5 устройств", "price": 450, "days": 90, "devices": 5},
-    "6_months": {"name": "6 месяцев · 5 устройств", "price": 700, "days": 180, "devices": 5},
-    "12_months": {"name": "12 месяцев · 5 устройств", "price": 1000, "days": 365, "devices": 5},
+    "1_month": {"name": "1 месяц · 1 устройство", "price": 200, "days": 30, "devices": 1},
+    "2_months": {"name": "2 месяца · 1 устройство", "price": 300, "days": 60, "devices": 1},
+    "3_months": {"name": "3 месяца · 3 устройства", "price": 500, "days": 90, "devices": 3},
+    "6_months": {"name": "6 месяцев · 3 устройства", "price": 900, "days": 180, "devices": 3},
+    "12_months": {"name": "12 месяцев · 3 устройства", "price": 1000, "days": 365, "devices": 3},
 }
 
 REFERRAL_RATE = 0.30  # доля пополнения, начисляемая пригласившему

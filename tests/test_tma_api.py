@@ -43,7 +43,7 @@ async def test_tma_me_prefers_active_subscription() -> None:
             plan_code="6_months",
             status=SubscriptionStatus.active,
             access_token="active",
-            device_limit=5,
+            device_limit=3,
             expires_at=datetime.now(UTC) + timedelta(days=30),
         ),
     ]
@@ -53,4 +53,4 @@ async def test_tma_me_prefers_active_subscription() -> None:
     assert result["status"] == "active"
     assert result["plan_code"] == "6_months"
     assert result["plan_name"] == PLANS["6_months"]["name"]
-    assert result["device_limit"] == 5
+    assert result["device_limit"] == 3
