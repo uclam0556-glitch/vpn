@@ -8,6 +8,7 @@ from hamalivpn.sub_injector import (
     STANDALONE_CLUSTER_TAGS,
     TEMPORARY_LOCATION_FAILOVERS,
     apply_temporary_location_failovers,
+    build_resilient_location_config,
     canonical_cluster_tag,
     extract_subscription_token,
     happ_integrated_links,
@@ -81,6 +82,52 @@ def test_retired_outbounds_are_removed_from_profiles_and_selectors() -> None:
     serialized = json.dumps(result)
     assert '"proxy-fr"' not in serialized
     assert '"proxy-de"' not in serialized
+
+
+def test_new_germany_profile_keeps_stable_automatic_fallbacks() -> None:
+    config = {
+        "outbounds": [
+            {"tag": "proxy-de-new"},
+            {"tag": "proxy-nl"},
+            {"tag": "proxy-fr-new"},
+            {"tag": "proxy-fi"},
+            {"tag": "direct"},
+            {"tag": "block"},
+        ],
+        "routing": {
+            "rules": [
+                {"balancerTag": "LB", "network": "tcp,udp", "type": "field"}
+            ]
+        },
+    }
+
+    result = build_resilient_location_config(
+        config,
+        "de-new",
+        "🇩🇪 Германия (Новая)",
+    )
+
+    assert [outbound["tag"] for outbound in result["outbounds"]] == [
+        "proxy-de-new",
+        "proxy-nl",
+        "proxy-fr-new",
+        "direct",
+        "block",
+    ]
+    assert result["burstObservatory"]["subjectSelector"] == [
+        "proxy-de-new",
+        "proxy-nl",
+        "proxy-fr-new",
+    ]
+    assert result["burstObservatory"]["pingConfig"]["interval"] == "15s"
+    balancer = result["routing"]["balancers"][0]
+    assert balancer["fallbackTag"] == "proxy-nl"
+    assert balancer["selector"] == [
+        "proxy-de-new",
+        "proxy-nl",
+        "proxy-fr-new",
+    ]
+    assert result["routing"]["rules"][0]["balancerTag"] == "LB"
 
 
 def test_temporary_location_failover_rewrites_only_finland_and_uk(monkeypatch) -> None:

@@ -152,7 +152,7 @@ cat > "${INSTALL_DIR}/docker-compose.yml" <<'COMPOSE'
 # Не изменять вручную: управляется через install-node.sh
 services:
   remnawave-node:
-    image: remnawave/node:latest
+    image: ghcr.io/remnawave/node:latest
     container_name: remnawave-node
     restart: unless-stopped
     network_mode: host
@@ -166,7 +166,10 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:${NODE_PORT:-2095}/health || exit 1"]
+      # Remnawave Node exposes an mTLS API, so an unauthenticated HTTP health
+      # request is rejected even when the service is healthy. Probe the local
+      # listener instead.
+      test: ["CMD-SHELL", "bash -ec '</dev/tcp/127.0.0.1/$${NODE_PORT:-2095}'"]
       interval: 15s
       timeout: 5s
       retries: 5

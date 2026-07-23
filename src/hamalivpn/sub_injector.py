@@ -15,6 +15,7 @@ PROFILE_NOTE = (
     "Спасибо, что выбрали HamaliVPN. Если возникнут проблемы — напишите нам."
 )
 STANDALONE_CLUSTER_TAGS = ("nl", "fr-new", "de-new", "uk", "fi")
+STABLE_AUTO_OUTBOUND_TAGS = ("proxy-nl", "proxy-fr-new")
 CLUSTER_REMARKS = {
     "nl": "🇳🇱 Нидерланды",
     "fr-new": "🇫🇷 Франция (Новая)",
@@ -98,6 +99,73 @@ def remove_legacy_location_outbounds(config):
                 clean(child)
 
     clean(config)
+    return config
+
+
+def build_resilient_location_config(config, cluster_tag, remarks):
+    """Keep a location primary while giving it two transparent TCP fallbacks."""
+    primary_tag = "proxy-" + canonical_cluster_tag(cluster_tag)
+    fallback_tags = [
+        tag for tag in STABLE_AUTO_OUTBOUND_TAGS if tag != primary_tag
+    ]
+    selector = [primary_tag, *fallback_tags]
+    allowed = {*selector, "direct", "block"}
+
+    config["outbounds"] = [
+        outbound
+        for outbound in config.get("outbounds", [])
+        if outbound.get("tag") in allowed
+    ]
+    available = {outbound.get("tag") for outbound in config["outbounds"]}
+    selector = [tag for tag in selector if tag in available]
+    if not selector:
+        return config
+
+    fallback_tag = next(
+        (tag for tag in fallback_tags if tag in available),
+        selector[0],
+    )
+    config["burstObservatory"] = {
+        "subjectSelector": selector,
+        "pingConfig": {
+            "connectivity": "http://connectivitycheck.gstatic.com/generate_204",
+            "destination": "http://connectivitycheck.gstatic.com/generate_204",
+            "interval": "15s",
+            "sampling": 2,
+            "timeout": "3s",
+        },
+    }
+    config.setdefault("routing", {})["balancers"] = [
+        {
+            "fallbackTag": fallback_tag,
+            "selector": selector,
+            "strategy": {
+                "type": "leastLoad",
+                "settings": {
+                    "expected": 1,
+                    "maxRTT": "2s",
+                    "baselines": ["1s"],
+                    "tolerance": 0.2,
+                    "costs": [
+                        {
+                            "match": f"^{tag}$",
+                            "regexp": True,
+                            "value": index * 50,
+                        }
+                        for index, tag in enumerate(selector)
+                    ],
+                },
+            },
+            "tag": "LB",
+        }
+    ]
+    for rule in config["routing"].get("rules", []):
+        if rule.get("balancerTag"):
+            rule["balancerTag"] = "LB"
+        elif rule.get("outboundTag") == primary_tag:
+            rule.pop("outboundTag")
+            rule["balancerTag"] = "LB"
+    config["remarks"] = remarks
     return config
 
 
@@ -1106,11 +1174,11 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     "pingConfig": {
       "connectivity": "http://connectivitycheck.gstatic.com/generate_204",
       "destination": "http://connectivitycheck.gstatic.com/generate_204",
-      "interval": "1m",
+      "interval": "15s",
       "sampling": 2,
-      "timeout": "5s"
+      "timeout": "3s"
     },
-    "subjectSelector": ["proxy-nl", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi"]
+    "subjectSelector": ["proxy-nl", "proxy-fr-new"]
   },
   "dns": {
     "queryStrategy": "UseIPv4",
@@ -1172,20 +1240,17 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
     "balancers": [
       {
         "fallbackTag": "proxy-nl",
-        "selector": ["proxy-nl", "proxy-fr-new", "proxy-de-new", "proxy-uk", "proxy-fi"],
+        "selector": ["proxy-nl", "proxy-fr-new"],
         "strategy": {
           "type": "leastLoad",
           "settings": {
             "expected": 1,
-            "maxRTT": "4s",
-            "baselines": ["3s"],
+            "maxRTT": "2s",
+            "baselines": ["1s"],
             "tolerance": 0.12,
             "costs": [
               { "match": "^proxy-nl$", "regexp": true, "value": 0 },
-              { "match": "^proxy-fr-new$", "regexp": true, "value": 5 },
-              { "match": "^proxy-uk$", "regexp": true, "value": 25 },
-              { "match": "^proxy-fi$", "regexp": true, "value": 40 },
-              { "match": "^proxy-de-new$", "regexp": true, "value": 15 }
+              { "match": "^proxy-fr-new$", "regexp": true, "value": 5 }
             ]
           }
         },
@@ -1565,18 +1630,25 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                     for _t in STANDALONE_CLUSTER_TAGS:
                                         _k = "proxy-" + _t
                                         _c = json.loads(cluster_json)
-                                        _c["outbounds"] = [
-                                            o
-                                            for o in _c["outbounds"]
-                                            if o.get("tag") in (_k, "direct", "block")
-                                        ]
-                                        _c.pop("burstObservatory", None)
-                                        _c.get("routing", {}).pop("balancers", None)
-                                        for _rr in _c.get("routing", {}).get("rules", []):
-                                            if _rr.get("balancerTag"):
-                                                _rr.pop("balancerTag")
-                                                _rr["outboundTag"] = _k
-                                        _c["remarks"] = CLUSTER_REMARKS[_t]
+                                        if _t == "de-new":
+                                            _c = build_resilient_location_config(
+                                                _c,
+                                                _t,
+                                                CLUSTER_REMARKS[_t],
+                                            )
+                                        else:
+                                            _c["outbounds"] = [
+                                                o
+                                                for o in _c["outbounds"]
+                                                if o.get("tag") in (_k, "direct", "block")
+                                            ]
+                                            _c.pop("burstObservatory", None)
+                                            _c.get("routing", {}).pop("balancers", None)
+                                            for _rr in _c.get("routing", {}).get("rules", []):
+                                                if _rr.get("balancerTag"):
+                                                    _rr.pop("balancerTag")
+                                                    _rr["outboundTag"] = _k
+                                            _c["remarks"] = CLUSTER_REMARKS[_t]
                                         _all.append(_c)
                                     _hymap = {
                                         "103.112.69.188": "proxy-nl",
@@ -1705,18 +1777,25 @@ class ProxyHTTPRequestHandler(BaseHTTPRequestHandler):
                                 elif _ctag in ("nl", "fr-new", "de-new", "uk", "fi"):
                                     _keep = "proxy-" + _ctag
                                     _cfg = json.loads(cluster_json)
-                                    _cfg["outbounds"] = [
-                                        o
-                                        for o in _cfg["outbounds"]
-                                        if o.get("tag") in (_keep, "direct", "block")
-                                    ]
-                                    _cfg.pop("burstObservatory", None)
-                                    _cfg.get("routing", {}).pop("balancers", None)
-                                    for _r in _cfg.get("routing", {}).get("rules", []):
-                                        if _r.get("balancerTag"):
-                                            _r.pop("balancerTag")
-                                            _r["outboundTag"] = _keep
-                                    _cfg["remarks"] = CLUSTER_REMARKS.get(_ctag, _ctag)
+                                    if _ctag == "de-new":
+                                        _cfg = build_resilient_location_config(
+                                            _cfg,
+                                            _ctag,
+                                            CLUSTER_REMARKS[_ctag],
+                                        )
+                                    else:
+                                        _cfg["outbounds"] = [
+                                            o
+                                            for o in _cfg["outbounds"]
+                                            if o.get("tag") in (_keep, "direct", "block")
+                                        ]
+                                        _cfg.pop("burstObservatory", None)
+                                        _cfg.get("routing", {}).pop("balancers", None)
+                                        for _r in _cfg.get("routing", {}).get("rules", []):
+                                            if _r.get("balancerTag"):
+                                                _r.pop("balancerTag")
+                                                _r["outboundTag"] = _keep
+                                        _cfg["remarks"] = CLUSTER_REMARKS.get(_ctag, _ctag)
                                     raw = json.dumps(_cfg, ensure_ascii=False).encode("utf-8")
                                 else:
                                     raw = cluster_json.encode("utf-8")

@@ -1,0 +1,17 @@
+[Unit]
+Description=HamaliVPN node local recovery watchdog
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/hamalivpn-node-watchdog
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RuntimeDirectory=hamalivpn-node-watchdog
+RuntimeDirectoryMode=0755
+ReadWritePaths=/run/hamalivpn-node-watchdog
